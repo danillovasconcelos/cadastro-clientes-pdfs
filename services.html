@@ -139,9 +139,9 @@
     const sb = (SB_URL && SB_KEY) ? window.supabase.createClient(SB_URL, SB_KEY) : null;
 
     // Empresa atual (gravada na index). Ajuste a chave se usou outro nome.
-    const CURRENT_COMPANY_ID =
-      localStorage.getItem('CURRENT_COMPANY_ID') ||
-      sessionStorage.getItem('CURRENT_COMPANY_ID') ||
+    const COMPANY_ID =
+      localStorage.getItem('COMPANY_ID') ||
+      sessionStorage.getItem('COMPANY_ID') ||
       new URLSearchParams(location.search).get('company_id'); // fallback opcional
 
     /*********************************
