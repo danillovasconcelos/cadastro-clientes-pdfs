@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Painel do Analista</title>
+  <style>
+    body { font-family: system-ui, Arial; background:#0b0f19; color:#e7eaf3; margin:0; }
+    header, main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    section { border:1px solid #26304a; border-radius:10px; padding:14px; margin:14px 0; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom:1px solid #1e2742; padding:8px; text-align:left; }
+    input, select, button, textarea { background:#111729; color:#e7eaf3; border:1px solid #2c3453; border-radius:8px; padding:10px; }
+  </style>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header>
+  <h2>Painel do Analista</h2>
+  <p><a href="./index.html">← Voltar</a> | <a href="./services.html">Ir para Serviços (Usuário)</a></p>
+</header>
+
+<main>
+  <section id="who"></section>
+
+  <section>
+    <h3>Fila de análise</h3>
+    <table>
+      <thead><tr><th>Prot.</th><th>Tipo</th><th>Proprietário</th><th>Status</th></tr></thead>
+      <tbody id="inbox"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>Detalhes</h3>
+    <div id="details">Selecione um serviço.</div>
+
+    <div style="display:flex; gap:8; flex-wrap:wrap; margin-top:10px;">
+      <button id="btnTake">Assumir revisão</button>
+      <button id="btnApprove">Aprovar + Autorizar taxa</button>
+      <button id="btnConfirmFee">Confirmar pagamento</button>
+      <button id="btnConclude">Concluir</button>
+      <button id="btnReopen">Reabrir</button>
+    </div>
+
+    <div style="margin-top:12px;">
+      <h4>Solicitar correções</h4>
+      <textarea id="corrText" rows="4" style="width:100%" placeholder="Descreva as correções necessárias..."></textarea><br/>
+      <input type="file" id="corrFile"/>
+      <button id="btnCorrections">Enviar laudo de correção</button>
+    </div>
+  </section>
+</main>
+
+<script>
+  const SUPABASE_URL = localStorage.getItem('SUPABASE_URL');
+  const SUPABASE_ANON_KEY = localStorage.getItem('SUPABASE_ANON_KEY');
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let session=null, me=null, selected=null;
+
+  function el(id){ return document.getElementById(id); }
+  function makeReportPath(serviceId, filename){ return `${serviceId}/${filename}`; }
+
+  (async () => {
+    const { data: { session:s } } = await supabase.auth.getSession();
+    session = s;
+    if(!session){ el('who').innerHTML = 'Não logado.'; return; }
+
+    const { data: prof } = await supabase.from('profiles').select('full_name, role').eq('user_id', session.user.id).single();
+    me = prof;
+    el('who').innerHTML = `<b>Conectado como:</b> ${session.user.email} | <b>Perfil:</b> ${me?.full_name || '-'} (${me?.role || 'user'})`;
+
+    if(!['admin','analyst'].includes(me?.role)){
+      document.body.innerHTML = '<main style="padding:16px">Acesso restrito a Analista/Admin.</main>';
+      return;
+    }
+    await loadInbox();
+  })();
+
+  async function loadInbox(){
+    const { data } = await supabase
+      .from('services')
+      .select('id, service_type, owner_name, status, protocol, created_at')
+      .in('status', ['submitted','resubmitted','under_review','approved_pending_fee','fee_ok'])
+      .order('created_at', { ascending: true });
+    el('inbox').innerHTML = (data||[]).map(s => `
+      <tr data-id="${s.id}" style="cursor:pointer">
+        <td>${s.protocol || '—'}</td><td>${s.service_type}</td><td>${s.owner_name}</td><td>${s.status}</td>
+      </tr>
+    `).join('');
+    document.querySelectorAll('#inbox tr[data-id]').forEach(tr=>{
+      tr.onclick = ()=> selectSvc(tr.dataset.id);
+    });
+  }
+
+  async function selectSvc(id){
+    const { data } = await supabase.from('services').select('*').eq('id', id).single();
+    selected = data;
+    el('details').innerHTML = `
+      <p><b>ID:</b> ${selected.id}</p>
+      <p><b>Protocolo:</b> ${selected.protocol || '—'}</p>
+      <p><b>Tipo:</b> ${selected.service_type}</p>
+      <p><b>Status:</b> ${selected.status}</p>
+    `;
+  }
+
+  el('btnTake').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const { error } = await supabase.rpc('fn_analyst_take_review', { p_service_id: selected.id });
+    if(error) return alert(error.message);
+    await loadInbox(); await selectSvc(selected.id);
+  };
+
+  el('btnApprove').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const { error } = await supabase.rpc('fn_analyst_approve_and_authorize_fee', { p_service_id: selected.id, p_description: 'Taxa de aprovação' });
+    if(error) return alert(error.message);
+    await loadInbox(); await selectSvc(selected.id);
+  };
+
+  el('btnConfirmFee').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const { error } = await supabase.rpc('fn_analyst_confirm_fee', { p_service_id: selected.id });
+    if(error) return alert(error.message);
+    await loadInbox(); await selectSvc(selected.id);
+  };
+
+  el('btnConclude').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const { error } = await supabase.rpc('fn_analyst_conclude', { p_service_id: selected.id });
+    if(error) return alert(error.message);
+    await loadInbox();
+  };
+
+  el('btnReopen').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const txt = prompt('Motivo da reabertura:') || 'Correção complementar';
+    const { error } = await supabase.rpc('fn_analyst_reopen', { p_service_id: selected.id, p_text: txt });
+    if(error) return alert(error.message);
+    await loadInbox(); await selectSvc(selected.id);
+  };
+
+  el('btnCorrections').onclick = async ()=>{
+    if(!selected) return alert('Selecione um serviço.');
+    const file = el('corrFile').files?.[0] || null;
+    let path = null;
+    if(file){
+      path = makeReportPath(selected.id, file.name);
+      const { error: e1 } = await supabase.storage.from('reports').upload(path, file, { upsert: true });
+      if(e1) return alert(e1.message);
+    }
+    const text = el('corrText').value || 'Correções necessárias.';
+    const { error } = await supabase.rpc('fn_analyst_request_corrections', { p_service_id: selected.id, p_text: text, p_storage_path: path });
+    if(error) return alert(error.message);
+    el('corrText').value=''; el('corrFile').value='';
+    await loadInbox(); await selectSvc(selected.id);
+  };
+</script>
+</body>
+</html>
