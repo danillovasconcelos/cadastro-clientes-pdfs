@@ -56,6 +56,35 @@
   }
 </script>
 </head>
+  <!-- Carrega biblioteca Supabase -->
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+<script>
+  const SB_URL = localStorage.getItem('SUPABASE_URL') || sessionStorage.getItem('SUPABASE_URL');
+  const SB_KEY = localStorage.getItem('SUPABASE_ANON_KEY') || sessionStorage.getItem('SUPABASE_ANON_KEY');
+
+  if (!SB_URL || !SB_KEY) {
+    alert('Configure SUPABASE_URL e ANON_KEY na tela inicial.');
+  } else {
+    const sb = window.supabase.createClient(SB_URL, SB_KEY);
+
+    // Preenche o select de tipos de serviço
+    (async () => {
+      const { data, error } = await sb.from('service_types').select('id, name').order('name');
+      if (error) {
+        console.error('Erro ao carregar tipos:', error);
+        alert('Erro ao carregar tipos de serviço.');
+        return;
+      }
+
+      const select = document.querySelector('select');
+      if (select) {
+        select.innerHTML = '<option value="">Selecione...</option>' +
+          data.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      }
+    })();
+  }
+</script>
 <body>
 <header>
   <h2>Painel do Analista</h2>
