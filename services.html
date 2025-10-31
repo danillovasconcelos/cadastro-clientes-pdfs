@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Serviços – Usuário</title>
+  <style>
+    body { font-family: system-ui, Arial; background:#0b0f19; color:#e7eaf3; margin:0; }
+    header, main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    section { border:1px solid #26304a; border-radius:10px; padding:14px; margin:14px 0; }
+    input, select, button, textarea { background:#111729; color:#e7eaf3; border:1px solid #2c3453; border-radius:8px; padding:10px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom:1px solid #1e2742; padding:8px; text-align:left; }
+    .row { display:grid; gap:10px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .muted{ opacity:.7 }
+  </style>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header>
+  <h2>Serviços (Usuário)</h2>
+  <div class="muted">⚙️ Se necessário, passe por “Configurar Supabase” da tela inicial para gravar URL/KEY no navegador.</div>
+  <p><a href="./index.html">← Voltar</a> | <a href="./analyst.html">Ir ao Painel do Analista</a></p>
+</header>
+
+<main>
+  <section id="who"></section>
+
+  <section>
+    <h3>Novo serviço</h3>
+    <div class="row">
+      <label>Tipo de serviço
+        <select id="serviceType"></select>
+      </label>
+      <span></span>
+      <label>Proprietário
+        <input id="owner_name" placeholder="Nome completo"/>
+      </label>
+      <label>CPF
+        <input id="owner_cpf" placeholder="CPF"/>
+      </label>
+      <label>Endereço do proprietário
+        <input id="owner_address" placeholder="Endereço"/>
+      </label>
+      <label>Endereço da obra
+        <input id="work_address" placeholder="Endereço"/>
+      </label>
+      <label>Área (m²)
+        <input id="area" type="number" value="0"/>
+      </label>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:10px;">
+      <button id="btnDraft">Criar rascunho</button>
+    </div>
+  </section>
+
+  <section>
+    <h3>Documentos obrigatórios</h3>
+    <div id="reqs" class="muted">Selecione o tipo e crie o rascunho para liberar os uploads.</div>
+    <div style="margin-top:10px; display:flex; gap:10px;">
+      <button id="btnUpload" disabled>Enviar documentos</button>
+      <button id="btnSubmit" disabled>Confirmar e Enviar</button>
+    </div>
+  </section>
+
+  <section>
+    <h3>Meus serviços</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Tipo</th><th>Status</th><th>Protocolo</th></tr></thead>
+      <tbody id="myList"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+  // ---- SUPABASE CLIENT -------------------------------------------------------
+  const SUPABASE_URL = localStorage.getItem('SUPABASE_URL');
+  const SUPABASE_ANON_KEY = localStorage.getItem('SUPABASE_ANON_KEY');
+  if(!SUPABASE_URL || !SUPABASE_ANON_KEY){ alert('Configure SUPABASE_URL e ANON_KEY na tela inicial.'); }
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let session = null;
+  let me = null;
+  let serviceTypes = [];
+  let requirements = [];
+  let currentServiceId = null;
+  const fileMap = {}; // doc_code -> File
+
+  // ---- helpers ----------------------------------------------------------------
+  function el(id){ return document.getElementById(id); }
+  function makePdfPath(serviceId, docCode, filename){
+    return `${serviceId}/${docCode}/${filename}`
+  }
+
+  async function getSession(){
+    const { data: { session: s } } = await supabase.auth.getSession();
+    return s;
+  }
+
+  // ---- INIT -------------------------------------------------------------------
+  (async () => {
+    session = await getSession();
+    if(!session){
+      el('who').innerHTML = '<b>Não logado.</b> Use a tela inicial para criar/entrar.';
+      return;
+    }
+    const { data: prof } = await supabase.from('profiles').select('full_name, role').eq('user_id', session.user.id).single();
+    me = prof;
+    el('who').innerHTML = `<b>Conectado como:</b> ${session.user.email} &nbsp; | &nbsp; <b>Perfil:</b> ${me?.full_name || '-'} (${me?.role || 'user'})`;
+
+    await loadServiceTypes();
+    await listMine();
+  })();
+
+  async function loadServiceTypes(){
+    const { data } = await supabase.from('service_types').select('code,name').order('name');
+    serviceTypes = data || [];
+    el('serviceType').innerHTML = '<option value="">-- selecione --</option>' +
+      serviceTypes.map(t => `<option value="${t.code}">${t.name}</option>`).join('');
+    el('serviceType').addEventListener('change', loadRequirements);
+  }
+
+  async function loadRequirements(){
+    const type = el('serviceType').value;
+    currentServiceId = null;
+    el('reqs').innerHTML = 'Carregando…';
+    if(!type){ el('reqs').innerHTML = 'Selecione o tipo.'; return; }
+
+    const { data } = await supabase
+      .from('service_type_requirements')
+      .select('document_code, document_types (code, name)')
+      .eq('service_type', type)
+      .order('document_code');
+    requirements = data || [];
+
+    if(!requirements.length){ el('reqs').innerHTML = 'Sem requisitos cadastrados.'; return; }
+
+    el('reqs').innerHTML = requirements.map(r => `
+      <div style="display:flex;align-items:center;gap:10px;margin:6px 0;">
+        <b style="min-width:260px">${r.document_types.name} (${r.document_code})</b>
+        <input type="file" data-doc="${r.document_code}" disabled/>
+      </div>
+    `).join('');
+
+    // mapear inputs:
+    document.querySelectorAll('input[type=file][data-doc]').forEach(inp=>{
+      inp.onchange = (e)=> fileMap[inp.dataset.doc] = e.target.files?.[0] || null;
+    });
+
+    el('btnUpload').disabled = true;
+    el('btnSubmit').disabled = true;
+  }
+
+  // ---- Criar rascunho ---------------------------------------------------------
+  el('btnDraft').onclick = async () => {
+    const type = el('serviceType').value;
+    if(!type) return alert('Selecione o tipo.');
+
+    const payload = {
+      service_type: type,
+      owner_name: el('owner_name').value,
+      owner_cpf: el('owner_cpf').value,
+      owner_address: el('owner_address').value,
+      work_address: el('work_address').value,
+      area: Number(el('area').value || 0),
+      status: 'draft'
+    };
+    if(!payload.owner_name || !payload.owner_cpf) return alert('Preencha nome e CPF.');
+
+    const { data, error } = await supabase.from('services').insert(payload).select('id').single();
+    if(error) return alert(error.message);
+
+    currentServiceId = data.id;
+    // liberar inputs de arquivo
+    document.querySelectorAll('input[type=file][data-doc]').forEach(inp=> inp.disabled = false);
+    el('btnUpload').disabled = false;
+    el('btnSubmit').disabled = false;
+    alert('Rascunho criado. Envie os documentos e clique em "Confirmar e Enviar".');
+    await listMine();
+  };
+
+  // ---- Upload documentos -------------------------------------------------------
+  el('btnUpload').onclick = async () => {
+    if(!currentServiceId) return alert('Crie o rascunho primeiro.');
+    // checar obrigatórios
+    for(const r of requirements){
+      if(!fileMap[r.document_code]) return alert(`Falta o documento: ${r.document_code}`);
+    }
+    for(const r of requirements){
+      const f = fileMap[r.document_code];
+      const path = makePdfPath(currentServiceId, r.document_code, f.name);
+      const { error: e1 } = await supabase.storage.from('pdfs').upload(path, f, { upsert: true });
+      if(e1) return alert(e1.message);
+      const { error: e2 } = await supabase.from('service_documents')
+        .upsert({ service_id: currentServiceId, document_code: r.document_code, storage_path: path, status: 'uploaded' }, { onConflict: 'service_id,document_code' });
+      if(e2) return alert(e2.message);
+    }
+    alert('Documentos enviados!');
+  };
+
+  // ---- Submeter para análise ---------------------------------------------------
+  el('btnSubmit').onclick = async () => {
+    if(!currentServiceId) return alert('Crie o rascunho primeiro.');
+    // checar se todos existem em service_documents
+    const { data: docs } = await supabase.from('service_documents').select('document_code').eq('service_id', currentServiceId);
+    const uploaded = new Set((docs||[]).map(d=>d.document_code));
+    const missing = requirements.filter(r=>!uploaded.has(r.document_code));
+    if(missing.length) return alert('Ainda faltam documentos obrigatórios.');
+
+    const { error } = await supabase.rpc('fn_user_submit_service', { p_service_id: currentServiceId });
+    if(error) return alert(error.message);
+    currentServiceId = null;
+    document.querySelectorAll('input[type=file][data-doc]').forEach(inp=> inp.disabled = true);
+    el('btnUpload').disabled = true;
+    el('btnSubmit').disabled = true;
+    alert('Enviado para análise! O protocolo aparecerá na lista.');
+    await listMine();
+  };
+
+  // ---- Listar meus serviços ----------------------------------------------------
+  async function listMine(){
+    const { data } = await supabase
+      .from('services')
+      .select('id, service_type, status, protocol')
+      .eq('owner_id', session.user.id)
+      .order('created_at', { ascending: false });
+    el('myList').innerHTML = (data||[]).map(s =>
+      `<tr><td>${s.id.slice(0,8)}…</td><td>${s.service_type}</td><td>${s.status}</td><td>${s.protocol || '-'}</td></tr>`
+    ).join('');
+  }
+</script>
+</body>
+</html>
