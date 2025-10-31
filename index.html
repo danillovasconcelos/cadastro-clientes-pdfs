@@ -220,8 +220,27 @@ for delete to authenticated using (
   <script type="module">
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
 
+    /* ===== Helpers para storage ===== */
+    const K_URL = 'SUPABASE_URL';
+    const K_KEY = 'SUPABASE_ANON_KEY';
+    const K_COMPANY = 'COMPANY_ID';
+
+    const saveConfig = (url, key) => {
+      // grava em AMBAS as storages
+      localStorage.setItem(K_URL, url);
+      localStorage.setItem(K_KEY, key);
+      sessionStorage.setItem(K_URL, url);
+      sessionStorage.setItem(K_KEY, key);
+    };
+
+    const loadConfig = () => ({
+      url: localStorage.getItem(K_URL) || sessionStorage.getItem(K_URL) || '',
+      key: localStorage.getItem(K_KEY) || sessionStorage.getItem(K_KEY) || '',
+    });
+    /* ================================= */
+
     let supabase = null
-    let currentCompanyId = sessionStorage.getItem('COMPANY_ID') || null
+    let currentCompanyId = sessionStorage.getItem(K_COMPANY) || null
 
     const qs = (sel) => document.querySelector(sel)
     const authStatus = qs('#authStatus')
@@ -237,8 +256,10 @@ for delete to authenticated using (
     const inpKey = qs('#inpKey')
     const btnConnect = qs('#btnConnect')
 
-    inpUrl.value = sessionStorage.getItem('SUPA_URL') || ''
-    inpKey.value = sessionStorage.getItem('SUPA_KEY') || ''
+    // restaura valores salvos (localStorage ou sessionStorage)
+    const restored = loadConfig();
+    inpUrl.value = restored.url
+    inpKey.value = restored.key
 
     function setConnStatus(text, cls='warn'){
       const el = qs('#connStatus')
@@ -255,8 +276,8 @@ for delete to authenticated using (
       const url = inpUrl.value.trim()
       const key = inpKey.value.trim()
       if(!url || !key){ setConnStatus('Preencha URL e KEY', 'err'); return }
-      sessionStorage.setItem('SUPA_URL', url)
-      sessionStorage.setItem('SUPA_KEY', key)
+      // grava em localStorage e sessionStorage
+      saveConfig(url, key)
       supabase = createClient(url, key)
       setConnStatus('Conectado (pronto para login).', 'ok')
     })
@@ -311,7 +332,7 @@ for delete to authenticated using (
       try{
         const sb = ensureClient()
         await sb.auth.signOut();
-        sessionStorage.removeItem('COMPANY_ID')
+        sessionStorage.removeItem(K_COMPANY)
         currentCompanyId = null
         await refreshAuthUI()
       }catch(err){ alert('Erro ao sair: ' + err.message) }
@@ -356,8 +377,8 @@ for delete to authenticated using (
 
     async function onCompanySelected(id){
       currentCompanyId = id
-      if(!id){ sessionStorage.removeItem('COMPANY_ID'); companyCurrent.textContent = '—'; clientsCard.style.display = 'none'; return }
-      sessionStorage.setItem('COMPANY_ID', id)
+      if(!id){ sessionStorage.removeItem(K_COMPANY); companyCurrent.textContent = '—'; clientsCard.style.display = 'none'; return }
+      sessionStorage.setItem(K_COMPANY, id)
       companyCurrent.textContent = id
       clientsCard.style.display = ''
       await loadClients()
@@ -499,9 +520,14 @@ for delete to authenticated using (
     }
 
     window.addEventListener('load', async () => {
-      if(inpUrl.value && inpKey.value){
-        supabase = createClient(inpUrl.value, inpKey.value)
+      // Se já havia URL/KEY salvos, restaura e conecta
+      const cfg = loadConfig();
+      if(cfg.url && cfg.key){
+        supabase = createClient(cfg.url, cfg.key)
         setConnStatus('Conectado (restaurado).', 'ok')
+        // preenche inputs visuais também
+        inpUrl.value = cfg.url
+        inpKey.value = cfg.key
       }
       if(supabase){ await refreshAuthUI() }
     })
