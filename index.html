@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exemplo Cadastro Clientes · Empresas + PDFs (MVP Supabase)</title>
+  <style>
+    :root{--bg:#0b1020;--card:#11162d;--muted:#8ea0c6;--text:#e8eeff;--accent:#6aa1ff;--ok:#36d399;--warn:#fbbd23;--err:#f87272}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;background:var(--bg);color:var(--text)}
+    header{padding:20px 16px;border-bottom:1px solid #1e2547;display:flex;gap:12px;align-items:center;justify-content:space-between}
+    .brand{font-weight:700;letter-spacing:.2px}
+    .wrap{max-width:1100px;margin:0 auto;padding:20px 16px;display:grid;gap:16px}
+    .card{background:var(--card);border:1px solid #1e2547;border-radius:16px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:6px}
+    input,button,select{border-radius:12px;border:1px solid #2a3569;background:#0d1430;color:var(--text);padding:10px 12px}
+    input,select{min-width:220px}
+    button{cursor:pointer}
+    button.primary{background:var(--accent);border-color:#2a62ff;color:#071226;font-weight:600}
+    button.ghost{background:transparent}
+    .grid{display:grid;gap:12px}
+    .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    @media (max-width:900px){.grid.cols-2{grid-template-columns:1fr}}
+    .list{display:grid;gap:10px}
+    .item{border:1px solid #24306a;border-radius:12px;padding:12px}
+    .muted{color:var(--muted)}
+    .pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#0a1230;border:1px solid #2a3569;color:var(--muted);font-size:.8rem}
+    .flex{display:flex;gap:10px;align-items:center}
+    .space{flex:1}
+    .status{font-size:.9rem}
+    .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.err{color:var(--err)}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.85rem; background:#0a1230; border:1px solid #2a3569; padding:2px 6px; border-radius:6px}
+    .hr{height:1px;background:#1e2547;margin:10px 0}
+    .link{color:var(--accent);text-decoration:none}
+    .note{font-size:.9rem; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Exemplo Cadastro Clientes · 🏢 Empresas · 📁 Clientes · 📄 PDFs</div>
+    <div class="flex" id="authBox">
+      <span id="authStatus" class="status warn">Desconectado</span>
+      <button id="btnLogout" class="ghost" style="display:none">Sair</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <!-- Config + Login -->
+    <div class="card">
+      <div class="grid cols-2">
+        <div>
+          <h3>1) Configurar Supabase</h3>
+          <div class="note">Cole sua <strong>SUPABASE_URL</strong> e <strong>ANON KEY</strong> (salvo apenas nesta sessão do navegador).</div>
+          <div class="row" style="margin-top:10px">
+            <input id="inpUrl" placeholder="SUPABASE_URL" />
+            <input id="inpKey" placeholder="SUPABASE_ANON_KEY" />
+            <button id="btnConnect" class="primary">Conectar</button>
+          </div>
+          <div style="margin-top:8px">Status: <span id="connStatus" class="status warn">Aguardando…</span></div>
+        </div>
+        <div>
+          <h3>2) Login / Cadastro</h3>
+          <div class="row">
+            <input id="email" type="email" placeholder="email@exemplo.com" />
+            <input id="password" type="password" placeholder="Senha" />
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button id="btnSignUp">Criar usuário</button>
+            <button id="btnSignIn" class="primary">Entrar</button>
+          </div>
+          <div class="note" style="margin-top:6px">Após logar, crie ou selecione uma empresa para trabalhar.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empresa -->
+    <div class="card" id="companyCard" style="display:none">
+      <h3>Empresa</h3>
+      <div class="row">
+        <select id="companySelect"></select>
+        <button id="btnRefreshCompanies">Atualizar</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="companyName" placeholder="Nova empresa: Nome fantasia" />
+        <button id="btnCreateCompany" class="primary">Criar empresa</button>
+      </div>
+      <div style="margin-top:8px" class="muted">Empresa atual: <span id="companyCurrent" class="pill">—</span></div>
+    </div>
+
+    <!-- Cadastro Cliente -->
+    <div class="card" id="clientsCard" style="display:none">
+      <h3>Cadastro de Cliente</h3>
+      <div class="row">
+        <input id="c_name" placeholder="Nome completo" />
+        <input id="c_email" placeholder="Email" />
+        <input id="c_phone" placeholder="Telefone" />
+        <button id="btnCreateClient" class="primary">Salvar</button>
+      </div>
+      <div class="hr"></div>
+      <h3>Clientes da empresa</h3>
+      <div id="clientsList" class="list"></div>
+    </div>
+
+    <div class="card">
+      <details>
+        <summary><strong>SQL para criar tabelas e políticas (clique para ver)</strong></summary>
+<pre class="note" style="white-space:pre-wrap">
+-- EXTENSÕES
+create extension if not exists pgcrypto;
+
+-- EMPRESAS
+create table if not exists public.companies (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz default now()
+);
+
+-- MEMBROS
+create table if not exists public.company_members (
+  company_id uuid not null references public.companies(id) on delete cascade,
+  user_id uuid not null,
+  role text default 'owner',
+  created_at timestamptz default now(),
+  primary key (company_id, user_id)
+);
+
+-- CLIENTES
+create table if not exists public.clients (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  owner_id uuid not null,
+  name text not null,
+  email text,
+  phone text,
+  created_at timestamptz default now()
+);
+
+-- ARQUIVOS
+create table if not exists public.files (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  client_id uuid not null references public.clients(id) on delete cascade,
+  uploader_id uuid not null,
+  file_name text not null,
+  storage_path text not null,
+  uploaded_at timestamptz default now()
+);
+
+-- RLS
+alter table public.companies enable row level security;
+alter table public.company_members enable row level security;
+alter table public.clients enable row level security;
+alter table public.files enable row level security;
+
+-- POLÍTICAS
+create policy if not exists companies_read on public.companies
+for select to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = companies.id and m.user_id = auth.uid())
+);
+
+create policy if not exists companies_insert on public.companies
+for insert to authenticated with check (true);
+
+create policy if not exists members_read on public.company_members
+for select to authenticated using (
+  user_id = auth.uid() or exists(
+    select 1 from public.company_members x where x.company_id = company_members.company_id and x.user_id = auth.uid()
+  )
+);
+
+create policy if not exists members_insert on public.company_members
+for insert to authenticated with check (
+  auth.uid() = user_id
+);
+
+create policy if not exists clients_read on public.clients
+for select to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = clients.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists clients_crud_ins on public.clients
+for insert to authenticated with check (
+  exists(select 1 from public.company_members m where m.company_id = clients.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists clients_crud_upd on public.clients
+for update to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = clients.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists clients_crud_del on public.clients
+for delete to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = clients.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists files_read on public.files
+for select to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = files.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists files_insert on public.files
+for insert to authenticated with check (
+  exists(select 1 from public.company_members m where m.company_id = files.company_id and m.user_id = auth.uid())
+);
+
+create policy if not exists files_delete on public.files
+for delete to authenticated using (
+  exists(select 1 from public.company_members m where m.company_id = files.company_id and m.user_id = auth.uid())
+);
+
+-- STORAGE (bucket 'pdfs'): criar no Supabase e usar convenção
+-- caminho: company_id/cliente_id/timestamp-nome.pdf
+-- Policies do bucket: permitir SELECT/INSERT a 'authenticated' (bloquear UPDATE/DELETE no MVP).
+</pre>
+      </details>
+    </div>
+
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+
+    let supabase = null
+    let currentCompanyId = sessionStorage.getItem('COMPANY_ID') || null
+
+    const qs = (sel) => document.querySelector(sel)
+    const authStatus = qs('#authStatus')
+    const btnLogout = qs('#btnLogout')
+    const companyCard = qs('#companyCard')
+    const companySelect = qs('#companySelect')
+    const companyCurrent = qs('#companyCurrent')
+    const clientsCard = qs('#clientsCard')
+    const clientsList = qs('#clientsList')
+
+    // Conexão
+    const inpUrl = qs('#inpUrl')
+    const inpKey = qs('#inpKey')
+    const btnConnect = qs('#btnConnect')
+
+    inpUrl.value = sessionStorage.getItem('SUPA_URL') || ''
+    inpKey.value = sessionStorage.getItem('SUPA_KEY') || ''
+
+    function setConnStatus(text, cls='warn'){
+      const el = qs('#connStatus')
+      el.textContent = text
+      el.className = 'status ' + cls
+    }
+
+    function ensureClient(){
+      if(!supabase) throw new Error('Conecte ao Supabase primeiro.')
+      return supabase
+    }
+
+    btnConnect.addEventListener('click', () => {
+      const url = inpUrl.value.trim()
+      const key = inpKey.value.trim()
+      if(!url || !key){ setConnStatus('Preencha URL e KEY', 'err'); return }
+      sessionStorage.setItem('SUPA_URL', url)
+      sessionStorage.setItem('SUPA_KEY', key)
+      supabase = createClient(url, key)
+      setConnStatus('Conectado (pronto para login).', 'ok')
+    })
+
+    // Auth
+    const email = qs('#email')
+    const password = qs('#password')
+    const btnSignUp = qs('#btnSignUp')
+    const btnSignIn = qs('#btnSignIn')
+
+    async function refreshAuthUI(){
+      const sb = ensureClient()
+      const { data: { user } } = await sb.auth.getUser()
+      if(user){
+        authStatus.textContent = 'Conectado: ' + (user.email || user.id)
+        authStatus.className = 'status ok'
+        btnLogout.style.display = ''
+        companyCard.style.display = ''
+        await loadCompanies()
+        if(currentCompanyId){ await onCompanySelected(currentCompanyId) }
+      } else {
+        authStatus.textContent = 'Desconectado'
+        authStatus.className = 'status warn'
+        btnLogout.style.display = 'none'
+        companyCard.style.display = 'none'
+        clientsCard.style.display = 'none'
+        clientsList.innerHTML = ''
+        companySelect.innerHTML = ''
+        companyCurrent.textContent = '—'
+      }
+    }
+
+    btnSignUp.addEventListener('click', async () => {
+      try{
+        const sb = ensureClient()
+        const { error } = await sb.auth.signUp({ email: email.value.trim(), password: password.value })
+        if(error) throw error
+        alert('Usuário criado. Verifique e-mail (se exigido) e depois Entre.')
+      }catch(err){ alert('Erro ao criar usuário: ' + err.message) }
+    })
+
+    btnSignIn.addEventListener('click', async () => {
+      try{
+        const sb = ensureClient()
+        const { error } = await sb.auth.signInWithPassword({ email: email.value.trim(), password: password.value })
+        if(error) throw error
+        await refreshAuthUI()
+      }catch(err){ alert('Erro no login: ' + err.message) }
+    })
+
+    btnLogout.addEventListener('click', async () => {
+      try{
+        const sb = ensureClient()
+        await sb.auth.signOut();
+        sessionStorage.removeItem('COMPANY_ID')
+        currentCompanyId = null
+        await refreshAuthUI()
+      }catch(err){ alert('Erro ao sair: ' + err.message) }
+    })
+
+    // Empresas
+    const btnCreateCompany = qs('#btnCreateCompany')
+    const btnRefreshCompanies = qs('#btnRefreshCompanies')
+    const companyName = qs('#companyName')
+
+    async function loadCompanies(){
+      const sb = ensureClient()
+      const uid = (await sb.auth.getUser()).data.user?.id
+      const { data, error } = await sb
+        .from('companies')
+        .select('id,name,created_at, company_members!inner(user_id)')
+        .eq('company_members.user_id', uid)
+        .order('created_at', { ascending:false })
+      if(error){ alert('Erro ao listar empresas: '+ error.message); return }
+      companySelect.innerHTML = ''
+      if(!data?.length){
+        const opt = document.createElement('option');
+        opt.value = ''; opt.textContent = '— Nenhuma empresa — crie uma';
+        companySelect.appendChild(opt)
+        clientsCard.style.display = 'none'
+        companyCurrent.textContent = '—'
+        return
+      }
+      for(const comp of data){
+        const opt = document.createElement('option');
+        opt.value = comp.id; opt.textContent = comp.name + ' ('+comp.id.slice(0,8)+')'
+        companySelect.appendChild(opt)
+      }
+      if(currentCompanyId){ companySelect.value = currentCompanyId }
+      companySelect.dispatchEvent(new Event('change'))
+    }
+
+    companySelect.addEventListener('change', async (e) => {
+      const id = e.target.value || null
+      await onCompanySelected(id)
+    })
+
+    async function onCompanySelected(id){
+      currentCompanyId = id
+      if(!id){ sessionStorage.removeItem('COMPANY_ID'); companyCurrent.textContent = '—'; clientsCard.style.display = 'none'; return }
+      sessionStorage.setItem('COMPANY_ID', id)
+      companyCurrent.textContent = id
+      clientsCard.style.display = ''
+      await loadClients()
+    }
+
+    btnCreateCompany.addEventListener('click', async () => {
+      try{
+        const sb = ensureClient()
+        const nm = companyName.value.trim()
+        if(!nm){ alert('Informe o nome da empresa.'); return }
+        const { data: comp, error: cErr } = await sb.from('companies').insert({ name: nm }).select('id').single()
+        if(cErr) throw cErr
+        const uid = (await sb.auth.getUser()).data.user.id
+        const { error: mErr } = await sb.from('company_members').insert({ company_id: comp.id, user_id: uid, role: 'owner' })
+        if(mErr) throw mErr
+        companyName.value=''
+        await loadCompanies()
+        await onCompanySelected(comp.id)
+        alert('Empresa criada e você foi definido como owner.')
+      }catch(err){ alert('Erro ao criar empresa: ' + err.message) }
+    })
+
+    btnRefreshCompanies.addEventListener('click', loadCompanies)
+
+    // Clientes por empresa
+    const btnCreateClient = qs('#btnCreateClient')
+    btnCreateClient.addEventListener('click', async () => {
+      try{
+        if(!currentCompanyId){ alert('Selecione uma empresa.'); return }
+        const sb = ensureClient()
+        const name = qs('#c_name').value.trim()
+        const emailV = qs('#c_email').value.trim()
+        const phone = qs('#c_phone').value.trim()
+        if(!name){ alert('Nome é obrigatório.'); return }
+        const uid = (await sb.auth.getUser()).data.user.id
+        const { error } = await sb.from('clients').insert({ company_id: currentCompanyId, owner_id: uid, name, email: emailV, phone })
+        if(error) throw error
+        qs('#c_name').value = ''
+        qs('#c_email').value = ''
+        qs('#c_phone').value = ''
+        await loadClients()
+      }catch(err){ alert('Erro ao salvar: ' + err.message) }
+    })
+
+    async function loadClients(){
+      if(!currentCompanyId){ clientsList.innerHTML = ''; return }
+      const sb = ensureClient()
+      const { data, error } = await sb.from('clients').select('*').eq('company_id', currentCompanyId).order('created_at', { ascending:false })
+      if(error){ alert('Erro ao listar clientes: ' + error.message); return }
+      clientsList.innerHTML = ''
+      data.forEach(renderClientItem)
+    }
+
+    function renderClientItem(c){
+      const div = document.createElement('div')
+      div.className = 'item'
+      div.innerHTML = `
+        <div class="flex">
+          <div class="space">
+            <div><strong>${c.name}</strong> <span class="pill">${c.id.slice(0,8)}</span></div>
+            <div class="muted">${c.email || ''} ${c.phone ? ' · ' + c.phone : ''}</div>
+          </div>
+          <div>
+            <label>Upload PDF</label>
+            <input type="file" accept="application/pdf" data-client="${c.id}" class="fileInput" />
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="files" id="files-${c.id}">Carregando arquivos…</div>
+      `
+      clientsList.appendChild(div)
+
+      div.querySelector('.fileInput').addEventListener('change', (e) => handleUploadPDF(e, c))
+      loadFilesForClient(c.id)
+    }
+
+    async function handleUploadPDF(e, client){
+      const file = e.target.files?.[0]
+      if(!file){ return }
+      if(file.type !== 'application/pdf'){ alert('Envie um arquivo PDF.'); return }
+      if(!currentCompanyId){ alert('Selecione uma empresa.'); return }
+      const sb = ensureClient()
+      try{
+        const uid = (await sb.auth.getUser()).data.user.id
+        const path = `${currentCompanyId}/${client.id}/${Date.now()}-${file.name}`
+        const { error: upErr } = await sb.storage.from('pdfs').upload(path, file, { contentType: 'application/pdf', upsert: false })
+        if(upErr) throw upErr
+        const { error: insErr } = await sb.from('files').insert({ company_id: currentCompanyId, client_id: client.id, uploader_id: uid, file_name: file.name, storage_path: path })
+        if(insErr) throw insErr
+        await loadFilesForClient(client.id)
+        alert('PDF enviado com sucesso!')
+      }catch(err){ alert('Falha no upload: ' + err.message) }
+      finally { e.target.value = '' }
+    }
+
+    async function loadFilesForClient(clientId){
+      const sb = ensureClient()
+      const box = qs(`#files-${clientId}`)
+      const { data, error } = await sb.from('files').select('*').eq('company_id', currentCompanyId).eq('client_id', clientId).order('uploaded_at', { ascending:false })
+      if(error){ box.textContent = 'Erro ao listar arquivos: ' + error.message; return }
+      if(!data.length){ box.innerHTML = '<span class="muted">Sem arquivos ainda.</span>'; return }
+      const list = document.createElement('div')
+      list.className = 'list'
+      for(const f of data){
+        let url = '#'
+        try{
+          const { data: signed, error: sErr } = await sb.storage.from('pdfs').createSignedUrl(f.storage_path, 3600)
+          if(sErr) throw sErr
+          url = signed?.signedUrl || '#'
+        }catch{}
+        const item = document.createElement('div')
+        item.className = 'item'
+        item.innerHTML = `
+          <div class="flex">
+            <div class="space">
+              <div><strong>${f.file_name}</strong></div>
+              <div class="muted">path: <span class="kbd">${f.storage_path}</span></div>
+            </div>
+            <div class="flex" style="gap:8px">
+              <a class="link" href="${url}" target="_blank">Baixar</a>
+              <button data-id="${f.id}" class="ghost delBtn">Excluir registro</button>
+            </div>
+          </div>
+        `
+        list.appendChild(item)
+      }
+      box.innerHTML = ''
+      box.appendChild(list)
+      box.querySelectorAll('.delBtn').forEach(btn => btn.addEventListener('click', (ev) => deleteFile(ev, clientId)))
+    }
+
+    async function deleteFile(ev, clientId){
+      const id = ev.currentTarget.getAttribute('data-id')
+      if(!confirm('Excluir este registro? (Arquivo no Storage NÃO será deletado neste MVP)')) return
+      const sb = ensureClient()
+      const { error } = await sb.from('files').delete().eq('id', id).eq('company_id', currentCompanyId)
+      if(error){ alert('Erro ao excluir: ' + error.message); return }
+      await loadFilesForClient(clientId)
+    }
+
+    window.addEventListener('load', async () => {
+      if(inpUrl.value && inpKey.value){
+        supabase = createClient(inpUrl.value, inpKey.value)
+        setConnStatus('Conectado (restaurado).', 'ok')
+      }
+      if(supabase){ await refreshAuthUI() }
+    })
+  </script>
+</body>
+</html>
