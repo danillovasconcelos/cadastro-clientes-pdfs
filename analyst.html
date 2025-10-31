@@ -13,6 +13,48 @@
     input, select, button, textarea { background:#111729; color:#e7eaf3; border:1px solid #2c3453; border-radius:8px; padding:10px; }
   </style>
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+  window.createSupabaseClient = createClient; // deixa acessível globalmente
+</script>
+<script>
+  // Lê as chaves salvas pelo índice
+  const SB_URL = localStorage.getItem('SUPABASE_URL') || sessionStorage.getItem('SUPABASE_URL');
+  const SB_KEY = localStorage.getItem('SUPABASE_ANON_KEY') || sessionStorage.getItem('SUPABASE_ANON_KEY');
+
+  if (!SB_URL || !SB_KEY) {
+    alert('Configure SUPABASE_URL e ANON_KEY na tela inicial.');
+  } else {
+    // Cria o client
+    window.sb = window.supabase.createClient(SB_URL, SB_KEY); // <- se usou opção B, troque por window.createSupabaseClient(...)
+
+    // Carrega os tipos e preenche o <select>
+    (async () => {
+      try {
+        const { data, error } = await sb
+          .from('service_types')
+          .select('id, name')
+          .order('name');
+
+        if (error) {
+          console.error('Erro ao carregar tipos de serviço:', error);
+          alert('Erro ao carregar tipos de serviço. Veja o console.');
+          return;
+        }
+
+        const sel = document.querySelector('#serviceType, #service-type, select[name="serviceType"]') 
+                 || document.querySelector('select'); // fallback simples
+        if (!sel) return;
+
+        sel.innerHTML = '<option value="">Selecione…</option>' +
+          data.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+      } catch (e) {
+        console.error(e);
+        alert('Falha ao inicializar Supabase (veja o console).');
+      }
+    })();
+  }
+</script>
 </head>
 <body>
 <header>
