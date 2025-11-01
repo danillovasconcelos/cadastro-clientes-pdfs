@@ -182,7 +182,7 @@ const SB_KEY =
     try{
       if (!sb) return; // sem conexão, apenas mostra o alerta
 
-      if (!CURRENT_COMPANY_ID) {
+      if (!COMPANY_ID) {
         toast('Empresa não definida. Selecione na tela inicial.', 'err');
       }
 
@@ -280,7 +280,7 @@ const SB_KEY =
       if (f.type !== 'application/pdf'){ toast(`Arquivo "${f.name}" deve ser PDF`, 'err'); return; }
       const code = inp.dataset.code;
       const docId = inp.dataset.docid;
-      const path = `${CURRENT_COMPANY_ID}/${currentService.id}/${code}.pdf`;
+      const path = `${COMPANY_ID}/${currentService.id}/${code}.pdf`;
       ups.push((async()=>{
         const { error: upErr } = await bucket.upload(path, f, { upsert:true, contentType:'application/pdf' });
         if (upErr) throw upErr;
