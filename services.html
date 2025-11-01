@@ -114,16 +114,12 @@
    **********************/
   // Aceita as duas convenções: SUPA_* (nossa tela inicial) e SUPABASE_*
   const SB_URL =
-    sessionStorage.getItem('SUPA_URL') ||
-    localStorage.getItem('SUPA_URL')  ||
-    sessionStorage.getItem('SUPABASE_URL') ||
-    localStorage.getItem('SUPABASE_URL');
+  sessionStorage.getItem('SUPABASE_URL')  || localStorage.getItem('SUPABASE_URL') ||
+  sessionStorage.getItem('SUPA_URL')      || localStorage.getItem('SUPA_URL');
 
-  const SB_KEY =
-    sessionStorage.getItem('SUPA_KEY') ||
-    localStorage.getItem('SUPA_KEY')  ||
-    sessionStorage.getItem('SUPABASE_ANON_KEY') ||
-    localStorage.getItem('SUPABASE_ANON_KEY');
+const SB_KEY =
+  sessionStorage.getItem('SUPABASE_ANON_KEY') || localStorage.getItem('SUPABASE_ANON_KEY') ||
+  sessionStorage.getItem('SUPA_KEY')          || localStorage.getItem('SUPA_KEY');
 
   // Empresa corrente gravada na index
   const CURRENT_COMPANY_ID =
