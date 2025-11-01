@@ -1,55 +1,165 @@
-<script>
-  /*********************************
-   * SUPABASE — bootstrap do cliente
-   *********************************/
-  const SB_URL = localStorage.getItem('SUPABASE_URL') || sessionStorage.getItem('SUPABASE_URL');
-  const SB_KEY = localStorage.getItem('SUPABASE_ANON_KEY') || sessionStorage.getItem('SUPABASE_ANON_KEY');
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Serviços — Usuário</title>
 
+  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
+  <style>
+    body { --pico-font-size: 16px; }
+    .muted { opacity: .7 }
+    .badge { padding:.2rem .5rem; border-radius:.4rem; font-size:.8rem }
+    .ok{ background:#10b981;color:#062; }
+    .warn{ background:#fbbf24;color:#221; }
+    .err{ background:#ef4444;color:#fff; }
+    .grid{ display:grid; gap:1rem }
+    .grid-2{ grid-template-columns:1fr 1fr }
+    .grid-3{ grid-template-columns:repeat(3,1fr) }
+    .table-wrap{ overflow:auto }
+    .lock{ opacity:.5; pointer-events:none; filter:grayscale(1) }
+    .small{ font-size:.85rem }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace }
+  </style>
+
+  <!-- Supabase JS v2 (UM ÚNICO import) -->
+  <script defer src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<main class="container">
+  <nav>
+    <ul><li><a href="./index.html">← Voltar</a></li></ul>
+    <ul>
+      <li class="muted small">Se preciso, passe na tela inicial para gravar <code>SUPA_URL</code>/<code>SUPA_KEY</code>.</li>
+      <li><a href="./analyst.html">Ir ao Painel do Analista</a></li>
+    </ul>
+  </nav>
+
+  <hgroup>
+    <h1>Serviços (Usuário)</h1>
+    <p class="muted">Crie o rascunho, envie os PDFs e finalize para análise.</p>
+  </hgroup>
+
+  <article id="alertConn" class="err" style="display:none; padding:.8rem; border-radius:.5rem;">
+    Configure SUPABASE na tela inicial.
+  </article>
+
+  <article id="cardForm">
+    <h3>Novo serviço</h3>
+    <div class="grid grid-3">
+      <label>Tipo de serviço
+        <select id="selType"></select>
+      </label>
+      <label>Proprietário
+        <input id="ownerName" placeholder="Nome completo" />
+      </label>
+      <label>CPF
+        <input id="ownerCpf" placeholder="CPF" />
+      </label>
+    </div>
+
+    <div class="grid grid-2">
+      <label>Endereço do proprietário
+        <input id="ownerAddr" placeholder="Endereço" />
+      </label>
+      <label>Endereço da obra
+        <input id="siteAddr" placeholder="Endereço" />
+      </label>
+    </div>
+
+    <div class="grid grid-3">
+      <label>Área (m²)
+        <input id="areaM2" type="number" min="0" value="0" />
+      </label>
+      <label>Protocolo
+        <input id="proto" class="mono" placeholder="—" disabled />
+      </label>
+      <label>Status
+        <input id="statusTxt" class="mono" placeholder="—" disabled />
+      </label>
+    </div>
+
+    <footer>
+      <button id="btnDraft">Criar rascunho</button>
+      <button id="btnSave" class="secondary" disabled>Salvar alterações</button>
+    </footer>
+  </article>
+
+  <article id="cardDocs" style="display:none;">
+    <h3>Documentos obrigatórios</h3>
+    <p class="muted small">Selecione o tipo e crie/salve o rascunho para liberar os uploads.</p>
+    <div id="docsList" class="grid"></div>
+    <footer>
+      <button id="btnSendDocs" class="secondary">Enviar documentos</button>
+      <button id="btnSubmit" class="contrast">Confirmar e Enviar</button>
+    </footer>
+  </article>
+
+  <article>
+    <h3>Meus serviços</h3>
+    <div class="table-wrap">
+      <table id="tblServices">
+        <thead>
+          <tr><th>ID</th><th>Tipo</th><th>Status</th><th>Protocolo</th><th>Criado em</th><th>Ações</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </article>
+</main>
+
+<script>
+  /**********************
+   * Bootstrap Supabase *
+   **********************/
+  // Aceita as duas convenções: SUPA_* (nossa tela inicial) e SUPABASE_*
+  const SB_URL =
+    sessionStorage.getItem('SUPA_URL') ||
+    localStorage.getItem('SUPA_URL')  ||
+    sessionStorage.getItem('SUPABASE_URL') ||
+    localStorage.getItem('SUPABASE_URL');
+
+  const SB_KEY =
+    sessionStorage.getItem('SUPA_KEY') ||
+    localStorage.getItem('SUPA_KEY')  ||
+    sessionStorage.getItem('SUPABASE_ANON_KEY') ||
+    localStorage.getItem('SUPABASE_ANON_KEY');
+
+  // Empresa corrente gravada na index
+  const CURRENT_COMPANY_ID =
+    sessionStorage.getItem('COMPANY_ID') ||
+    localStorage.getItem('COMPANY_ID') ||
+    null;
+
+  let sb = null;
   if (!SB_URL || !SB_KEY) {
     document.getElementById('alertConn').style.display = 'block';
+  } else {
+    sb = window.supabase.createClient(SB_URL, SB_KEY);
   }
 
-  const sb = (SB_URL && SB_KEY) ? window.supabase.createClient(SB_URL, SB_KEY) : null;
-
-  // Empresa atual gravada na index
-  const COMPANY_ID =
-    localStorage.getItem('COMPANY_ID') ||
-    sessionStorage.getItem('COMPANY_ID') ||
-    new URLSearchParams(location.search).get('company_id'); // fallback opcional
-
-  /*********************************
-   * Helpers
-   *********************************/
-  const $ = sel => document.querySelector(sel);
-  const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-
-  const statusLabel = (s) => {
-    const map = {
-      draft: ['Rascunho', 'warn'],
-      under_review: ['Em análise', 'warn'],
-      corrections_requested: ['Correções solicitadas', 'warn'],
-      concluded: ['Concluído', 'ok']
-    };
-    const [txt, cls] = map[s] || [s, 'muted'];
-    return `<span class="badge ${cls}">${txt}</span>`;
+  /************
+   * Helpers  *
+   ************/
+  const $  = (s)=>document.querySelector(s);
+  const fmt = new Intl.DateTimeFormat('pt-BR',{dateStyle:'short', timeStyle:'short'});
+  const statusLabel = (s)=>{
+    const map = { draft:['Rascunho','warn'], under_review:['Em análise','warn'], corrections_requested:['Correções','warn'], concluded:['Concluído','ok'] };
+    const [t,c] = map[s] || [s,'muted'];
+    return `<span class="badge ${c}">${t}</span>`;
   };
-
-  function toast(msg, type='info'){
-    const c = document.createElement('div');
-    c.textContent = msg;
-    c.style.cssText = `position:fixed; right:1rem; bottom:1rem; padding:.6rem .8rem; border-radius:.5rem; color:#fff; z-index:9999;`;
-    c.style.background = type==='err' ? '#d33' : (type==='ok' ? '#0a7' : '#333');
-    document.body.appendChild(c);
-    setTimeout(()=>c.remove(), 3600);
+  function toast(msg,type='info'){
+    const x=document.createElement('div');
+    x.textContent=msg;
+    x.style.cssText='position:fixed;right:1rem;bottom:1rem;padding:.6rem .8rem;border-radius:.5rem;color:#fff;z-index:9999';
+    x.style.background= type==='err'?'#d33':(type==='ok'?'#0a7':'#333');
+    document.body.appendChild(x); setTimeout(()=>x.remove(),3200);
   }
 
-  /*********************************
-   * Estado da tela
-   *********************************/
-  let currentService = null;   // objeto completo do serviço carregado
-  let requiredDocs = [];       // docs obrigatórios do tipo
-
-  // Campos
+  /***********************
+   * Elementos da página *
+   ***********************/
+  let currentService=null, requiredDocs=[];
   const selType   = $('#selType');
   const ownerName = $('#ownerName');
   const ownerCpf  = $('#ownerCpf');
@@ -65,217 +175,196 @@
   const btnSubmit = $('#btnSubmit');
   const docsList  = $('#docsList');
   const cardDocs  = $('#cardDocs');
-  const cardForm  = $('#cardForm');
   const tbody     = $('#tblServices tbody');
 
-  /*********************************
-   * Carregamentos iniciais
-   *********************************/
-  (async function init(){
+  /*****************
+   * Inicialização *
+   *****************/
+  window.addEventListener('DOMContentLoaded', init);
+
+  async function init(){
+    try{
+      if (!sb) return; // sem conexão, apenas mostra o alerta
+
+      if (!CURRENT_COMPANY_ID) {
+        toast('Empresa não definida. Selecione na tela inicial.', 'err');
+      }
+
+      // Tipos de serviço
+      const { data: types, error: e1 } = await sb.from('service_types').select('id,name').order('name');
+      if (e1) { console.error(e1); toast('Erro ao carregar tipos de serviço','err'); }
+      else {
+        selType.innerHTML = '<option value="">Selecione...</option>' + (types||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+      }
+
+      await loadMyServices();
+    }catch(err){
+      console.error('init error:', err);
+      toast('Erro ao inicializar a tela','err');
+    }
+  }
+
+  /************
+   * Ações UI *
+   ************/
+  btnDraft.addEventListener('click', async ()=>{
     if (!sb) return;
-
-    // Verifica empresa
-    if (!COMPANY_ID) {
-      toast('Empresa não definida. Selecione na tela inicial.', 'err');
-    }
-
-    // Carrega tipos de serviço
-    const { data: types, error: e1 } = await sb
-      .from('service_types')
-      .select('id, name')
-      .order('name');
-    if (e1) {
-      console.error(e1);
-      toast('Erro ao carregar tipos de serviço', 'err');
-    } else {
-      selType.innerHTML = '<option value="">Selecione...</option>' +
-        (types || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-    }
-
-    // Lista serviços do usuário/empresa
-    await loadMyServices();
-  })();
-
-  /*********************************
-   * Ações da UI
-   *********************************/
-  btnDraft.addEventListener('click', async () => {
-    if (!sb) return;
-    if (!COMPANY_ID) {
-      toast('Defina a empresa na tela inicial.', 'err');
-      return;
-    }
+    if (!CURRENT_COMPANY_ID){ toast('Defina a empresa na tela inicial.','err'); return; }
     const typeId = selType.value;
-    if (!typeId) {
-      toast('Escolha o tipo de serviço.', 'err');
-      return;
-    }
+    if (!typeId){ toast('Escolha o tipo de serviço.','err'); return; }
 
     const payload = {
-      company_id: COMPANY_ID,
+      company_id: CURRENT_COMPANY_ID,
       type_id: typeId,
       owner_name: ownerName.value?.trim() || null,
-      owner_cpf: ownerCpf.value?.trim() || null,
+      owner_cpf:  ownerCpf.value?.trim()  || null,
       owner_address: ownerAddr.value?.trim() || null,
-      site_address: siteAddr.value?.trim() || null,
-      area_m2: areaM2.value ? Number(areaM2.value) : 0,
+      site_address:  siteAddr.value?.trim()  || null,
+      area_m2: Number(areaM2.value||0),
       status: 'draft'
     };
-    console.log('[Criar/Salvar] payload:', payload);
 
-    // Se já existir um serviço carregado, vira “Salvar alterações”
-    if (currentService?.id) {
-      const { data, error } = await sb.from('services')
-        .update(payload).eq('id', currentService.id).select().single();
-      if (error) { console.error(error); return toast('Erro ao salvar rascunho: ' + (error.message||''), 'err'); }
+    try{
+      if (currentService?.id){
+        const { data, error } = await sb.from('services').update(payload).eq('id', currentService.id).select().single();
+        if (error) throw error;
+        currentService = data;
+        toast('Rascunho salvo','ok');
+        refreshForm();
+        await loadRequiredDocs();
+      } else {
+        const { data, error } = await sb.from('services').insert(payload).select().single();
+        if (error) throw error;
+        currentService = data;
+        toast('Rascunho criado','ok');
+        refreshForm();
+        await loadRequiredDocs();
+        await loadMyServices();
+      }
+    }catch(e){
+      console.error('create/update draft error:', e);
+      toast('Erro ao criar rascunho','err');
+    }
+  });
+
+  btnSave.addEventListener('click', async ()=>{
+    if (!sb || !currentService?.id) return;
+    try{
+      const payload = {
+        type_id: selType.value || null,
+        owner_name: ownerName.value?.trim() || null,
+        owner_cpf:  ownerCpf.value?.trim()  || null,
+        owner_address: ownerAddr.value?.trim() || null,
+        site_address:  siteAddr.value?.trim()  || null,
+        area_m2: Number(areaM2.value||0),
+      };
+      const { data, error } = await sb.from('services').update(payload).eq('id', currentService.id).select().single();
+      if (error) throw error;
       currentService = data;
-      toast('Rascunho salvo', 'ok');
+      toast('Alterações salvas','ok');
       refreshForm();
       await loadRequiredDocs();
-      return;
+      await loadMyServices();
+    }catch(e){
+      console.error('save error:', e);
+      toast('Erro ao salvar','err');
     }
-
-    // Cria rascunho novo
-    const { data, error } = await sb.from('services').insert(payload).select().single();
-    if (error) {
-      console.error('[INSERT services] error:', error);
-      return toast('Erro ao criar rascunho: ' + (error.message || 'ver console'), 'err');
-    }
-    currentService = data;
-    toast('Rascunho criado', 'ok');
-    refreshForm();
-    await loadRequiredDocs();
-    await loadMyServices();
   });
 
-  btnSave.addEventListener('click', async () => {
+  btnSendDocs.addEventListener('click', async ()=>{
     if (!sb || !currentService?.id) return;
-    const payload = {
-      type_id: selType.value || null,
-      owner_name: ownerName.value?.trim() || null,
-      owner_cpf: ownerCpf.value?.trim() || null,
-      owner_address: ownerAddr.value?.trim() || null,
-      site_address: siteAddr.value?.trim() || null,
-      area_m2: areaM2.value ? Number(areaM2.value) : 0,
-    };
-    const { data, error } = await sb.from('services')
-      .update(payload).eq('id', currentService.id).select().single();
-    if (error) { console.error(error); return toast('Erro ao salvar: ' + (error.message||''), 'err'); }
-    currentService = data;
-    toast('Alterações salvas', 'ok');
-    refreshForm();
-    await loadRequiredDocs();
-    await loadMyServices();
-  });
-
-  btnSendDocs.addEventListener('click', async () => {
-    if (!sb || !currentService?.id) return;
-
     const inputs = docsList.querySelectorAll('input[type=file]');
-    if (!inputs.length) return toast('Nenhum campo de upload disponível.', 'err');
+    if (!inputs.length) return toast('Nenhum campo de upload disponível.','err');
 
     const bucket = sb.storage.from('pdfs');
-    const uploads = [];
-
-    inputs.forEach(inp => {
-      const file = inp.files?.[0];
-      if (!file) return;
-      if (file.type !== 'application/pdf') {
-        return toast(`O arquivo "${file.name}" precisa ser PDF.`, 'err');
-      }
-      const docCode = inp.dataset.code; // veio do render
-      const docId   = inp.dataset.docid;
-      const path = `${COMPANY_ID}/${currentService.id}/${docCode}.pdf`;
-
-      uploads.push(
-        (async () => {
-          const { error: upErr } = await bucket.upload(path, file, { upsert: true, contentType: 'application/pdf' });
-          if (upErr) { console.error(upErr); throw upErr; }
-
-          const { error: dbErr } = await sb.from('service_documents')
-            .upsert({
-              service_id: currentService.id,
-              document_type_id: docId,
-              file_path: path,
-              uploaded_at: new Date().toISOString()
-            }, { onConflict: 'service_id,document_type_id' });
-          if (dbErr) { console.error(dbErr); throw dbErr; }
-        })()
-      );
+    const ups = [];
+    inputs.forEach(inp=>{
+      const f = inp.files?.[0];
+      if (!f) return;
+      if (f.type !== 'application/pdf'){ toast(`Arquivo "${f.name}" deve ser PDF`, 'err'); return; }
+      const code = inp.dataset.code;
+      const docId = inp.dataset.docid;
+      const path = `${CURRENT_COMPANY_ID}/${currentService.id}/${code}.pdf`;
+      ups.push((async()=>{
+        const { error: upErr } = await bucket.upload(path, f, { upsert:true, contentType:'application/pdf' });
+        if (upErr) throw upErr;
+        const { error: dbErr } = await sb.from('service_documents')
+          .upsert({ service_id: currentService.id, document_type_id: docId, file_path: path, uploaded_at: new Date().toISOString() },
+                  { onConflict: 'service_id,document_type_id' });
+        if (dbErr) throw dbErr;
+      })());
     });
 
-    try {
-      await Promise.all(uploads);
-      toast('Uploads salvos', 'ok');
+    try{
+      await Promise.all(ups);
+      toast('Uploads salvos','ok');
       await loadRequiredDocs();
-    } catch (e) {
-      toast('Falha ao enviar algum documento', 'err');
+    }catch(e){
+      console.error('upload error:', e);
+      toast('Falha ao enviar algum documento','err');
     }
   });
 
-  btnSubmit.addEventListener('click', async () => {
+  btnSubmit.addEventListener('click', async ()=>{
     if (!sb || !currentService?.id) return;
-
-    const { data, error } = await sb.from('services')
-      .update({ status: 'under_review', updated_at: new Date().toISOString() })
-      .eq('id', currentService.id).select().single();
-    if (error) { console.error(error); return toast('Erro ao enviar para análise: ' + (error.message||''), 'err'); }
-    currentService = data;
-    toast('Enviado para análise', 'ok');
-    refreshForm();
-    await loadMyServices();
+    try{
+      const { data, error } = await sb.from('services')
+        .update({ status:'under_review', updated_at: new Date().toISOString() })
+        .eq('id', currentService.id).select().single();
+      if (error) throw error;
+      currentService = data;
+      toast('Enviado para análise','ok');
+      refreshForm();
+      await loadMyServices();
+    }catch(e){
+      console.error('submit error:', e);
+      toast('Erro ao enviar para análise','err');
+    }
   });
 
-  /*********************************
-   * Funções de tela/dados
-   *********************************/
-  async function loadMyServices() {
+  /**********************
+   * Funções auxiliares *
+   **********************/
+  async function loadMyServices(){
     if (!sb) return;
     const { data, error } = await sb
       .from('services')
-      .select('id, status, protocol, created_at, service_types(name)')
-      .eq('company_id', COMPANY_ID)     // <<< filtra pela empresa
-      .order('created_at', { ascending: false });
-    if (error) { console.error(error); return; }
+      .select('id,status,protocol,created_at, service_types(name)')
+      .order('created_at',{ascending:false});
+    if (error){ console.error(error); return; }
 
-    tbody.innerHTML = (data || []).map(s => `
+    tbody.innerHTML = (data||[]).map(s=>`
       <tr>
         <td class="mono">${s.id}</td>
-        <td>${s.service_types?.name || '-'}</td>
+        <td>${s.service_types?.name||'-'}</td>
         <td>${statusLabel(s.status)}</td>
-        <td class="mono">${s.protocol || '-'}</td>
+        <td class="mono">${s.protocol||'-'}</td>
         <td>${fmt.format(new Date(s.created_at))}</td>
-        <td>
-          <button class="secondary small" data-edit="${s.id}" ${!canEdit(s.status) ? 'disabled' : ''}>Editar</button>
-        </td>
+        <td><button class="secondary small" data-edit="${s.id}" ${!['draft','corrections_requested'].includes(s.status)?'disabled':''}>Editar</button></td>
       </tr>
     `).join('');
 
-    tbody.querySelectorAll('button[data-edit]').forEach(btn => {
-      btn.addEventListener('click', () => loadServiceById(btn.dataset.edit));
+    tbody.querySelectorAll('button[data-edit]').forEach(b=>{
+      b.addEventListener('click', ()=>loadServiceById(b.dataset.edit));
     });
   }
 
-  function canEdit(status){
-    return ['draft','corrections_requested'].includes(status);
-  }
-
   async function loadServiceById(id){
-    if (!sb) return;
     const { data, error } = await sb.from('services').select('*').eq('id', id).single();
-    if (error) { console.error(error); return toast('Erro ao carregar serviço', 'err'); }
+    if (error){ console.error(error); toast('Erro ao carregar serviço','err'); return; }
     currentService = data;
     refreshForm();
     await loadRequiredDocs();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top:0, behavior:'smooth' });
   }
 
   function refreshForm(){
-    if (!currentService) {
+    if (!currentService){
       btnSave.disabled = true;
-      proto.value = ''; statusTxt.value = '';
-      docsList.innerHTML = ''; cardDocs.style.display = 'none';
-      cardForm.classList.remove('lock');
+      $('#docsList').innerHTML = '';
+      $('#cardDocs').style.display = 'none';
+      $('#cardForm').classList.remove('lock');
+      proto.value=''; statusTxt.value='';
       return;
     }
     selType.value   = currentService.type_id ?? '';
@@ -287,47 +376,47 @@
     proto.value     = currentService.protocol || '';
     statusTxt.value = currentService.status || '';
 
-    const editable = canEdit(currentService.status);
+    const editable = ['draft','corrections_requested'].includes(currentService.status);
     btnSave.disabled = !editable;
     btnSendDocs.disabled = !editable;
     btnSubmit.disabled = !editable;
-    cardForm.classList.toggle('lock', !editable);
-
-    cardDocs.style.display = 'block';
+    $('#cardForm').classList.toggle('lock', !editable);
+    $('#cardDocs').style.display = 'block';
   }
 
   async function loadRequiredDocs(){
     if (!sb || !currentService?.type_id) return;
 
-    let sel = 'document_type_id, document_types:document_type_id ( id, name, code )';
     const { data, error } = await sb
       .from('service_type_requirements')
-      .select(sel)
+      .select('document_type_id, document_types:document_type_id(id,name,code)')
       .eq('service_type_id', currentService.type_id);
-    if (error) { console.error(error); return; }
+    if (error){ console.error(error); return; }
 
     const { data: sent } = await sb
       .from('service_documents')
-      .select('document_type_id, file_path, uploaded_at')
+      .select('document_type_id,file_path,uploaded_at')
       .eq('service_id', currentService.id);
 
-    requiredDocs = (data || []).map(r => ({
-      id: r.document_types?.id || r.document_type_id,
+    requiredDocs = (data||[]).map(r=>({
+      id:   r.document_types?.id || r.document_type_id,
       name: r.document_types?.name || '(sem nome)',
       code: r.document_types?.code || 'doc',
-      sent: sent?.find(s => s.document_type_id === (r.document_types?.id || r.document_type_id)) || null
+      sent: sent?.find(s=> s.document_type_id === (r.document_types?.id || r.document_type_id)) || null
     }));
 
-    docsList.innerHTML = requiredDocs.map(d => `
+    docsList.innerHTML = requiredDocs.map(d=>`
       <article>
-        <header class="grid grid-3" style="align-items:center;">
+        <header class="grid grid-3" style="align-items:center">
           <strong>${d.name}</strong>
           <span class="mono small muted">código: ${d.code}</span>
-          <span>${d.sent ? '<span class="badge ok">enviado</span>' : '<span class="badge warn">pendente</span>'}</span>
+          <span>${d.sent?'<span class="badge ok">enviado</span>':'<span class="badge warn">pendente</span>'}</span>
         </header>
-        <input type="file" accept="application/pdf" data-code="${d.code}" data-docid="${d.id}" ${!canEdit(currentService.status) ? 'disabled' : ''}/>
-        ${d.sent ? `<small class="muted">Último envio: ${fmt.format(new Date(d.sent.uploaded_at))}</small>` : ''}
+        <input type="file" accept="application/pdf" data-code="${d.code}" data-docid="${d.id}" ${(['draft','corrections_requested'].includes(currentService.status)?'':'disabled')} />
+        ${d.sent?`<small class="muted">Último envio: ${fmt.format(new Date(d.sent.uploaded_at))}</small>`:''}
       </article>
     `).join('');
   }
 </script>
+</body>
+</html>
