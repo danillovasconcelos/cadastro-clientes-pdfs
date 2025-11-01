@@ -122,7 +122,7 @@ const SB_KEY =
   sessionStorage.getItem('SUPA_KEY')          || localStorage.getItem('SUPA_KEY');
 
   // Empresa corrente gravada na index
-  const CURRENT_COMPANY_ID =
+  const COMPANY_ID =
     sessionStorage.getItem('COMPANY_ID') ||
     localStorage.getItem('COMPANY_ID') ||
     null;
@@ -205,12 +205,12 @@ const SB_KEY =
    ************/
   btnDraft.addEventListener('click', async ()=>{
     if (!sb) return;
-    if (!CURRENT_COMPANY_ID){ toast('Defina a empresa na tela inicial.','err'); return; }
+    if (!COMPANY_ID){ toast('Defina a empresa na tela inicial.','err'); return; }
     const typeId = selType.value;
     if (!typeId){ toast('Escolha o tipo de serviço.','err'); return; }
 
     const payload = {
-      company_id: CURRENT_COMPANY_ID,
+      company_id: COMPANY_ID,
       type_id: typeId,
       owner_name: ownerName.value?.trim() || null,
       owner_cpf:  ownerCpf.value?.trim()  || null,
