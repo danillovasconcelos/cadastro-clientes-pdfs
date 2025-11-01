@@ -109,31 +109,65 @@
 </main>
 
 <script>
-  /**********************
-   * Bootstrap Supabase *
-   **********************/
-  // Aceita as duas convenções: SUPA_* (nossa tela inicial) e SUPABASE_*
-  const SB_URL =
-  sessionStorage.getItem('SUPABASE_URL')  || localStorage.getItem('SUPABASE_URL') ||
-  sessionStorage.getItem('SUPA_URL')      || localStorage.getItem('SUPA_URL');
+  /*********************************
+   * SUPABASE — bootstrap do cliente
+   *********************************/
+  // 1) Use os MESMOS nomes gravados na index (SUPA_URL / SUPA_KEY)
+  const SB_URL = sessionStorage.getItem('SUPA_URL') || localStorage.getItem('SUPA_URL') || '';
+  const SB_KEY = sessionStorage.getItem('SUPA_KEY') || localStorage.getItem('SUPA_KEY') || '';
 
-const SB_KEY =
-  sessionStorage.getItem('SUPABASE_ANON_KEY') || localStorage.getItem('SUPABASE_ANON_KEY') ||
-  sessionStorage.getItem('SUPA_KEY')          || localStorage.getItem('SUPA_KEY');
+  // 2) Mostra alerta se faltarem credenciais
+  if (!SB_URL || !SB_KEY) {
+    const a = document.getElementById('alertConn');
+    if (a) a.style.display = 'block';
+  }
 
-  // Empresa corrente gravada na index
+  // 3) Garante que o script do supabase carregou e cria o client
+  let sb = null;
+  function ensureSupabase() {
+    if (!window.supabase) {
+      throw new Error('Biblioteca Supabase não carregada (window.supabase indefinido).');
+    }
+    if (!SB_URL || !SB_KEY) {
+      throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador. Configure na tela inicial.');
+    }
+    if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
+    return sb;
+  }
+
+  // 4) Empresa atual (mesmo nome usado na index)
   const COMPANY_ID =
     sessionStorage.getItem('COMPANY_ID') ||
     localStorage.getItem('COMPANY_ID') ||
-    null;
+    new URLSearchParams(location.search).get('company_id');
 
-  let sb = null;
-  if (!SB_URL || !SB_KEY) {
-    document.getElementById('alertConn').style.display = 'block';
-  } else {
-    sb = window.supabase.createClient(SB_URL, SB_KEY);
+  /*********************************
+   * Helpers
+   *********************************/
+  const $ = (sel) => document.querySelector(sel);
+  const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+  const statusLabel = (s) => {
+    const map = {
+      draft: ['Rascunho', 'warn'],
+      under_review: ['Em análise', 'warn'],
+      corrections_requested: ['Correções solicitadas', 'warn'],
+      concluded: ['Concluído', 'ok'],
+    };
+    const [txt, cls] = map[s] || [s, 'muted'];
+    return `<span class="badge ${cls}">${txt}</span>`;
+  };
+
+  function toast(msg, type = 'info') {
+    const c = document.createElement('div');
+    c.textContent = msg;
+    c.style.cssText =
+      'position:fixed;right:1rem;bottom:1rem;padding:.6rem .8rem;border-radius:.5rem;color:#fff;z-index:9999;';
+    c.style.background = type === 'err' ? '#d33' : type === 'ok' ? '#0a7' : '#333';
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 3600);
   }
-
+</script>
   /************
    * Helpers  *
    ************/
