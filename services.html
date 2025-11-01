@@ -1,687 +1,202 @@
-<!doctype html>
-<html lang="pt-br">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Serviços — Usuário</title>
+-- 0) Extensão
+create extension if not exists pgcrypto;
 
-  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
-  <style>
-    body { --pico-font-size: 16px; }
-    .muted { opacity: .7 }
-    .badge { padding: .2rem .5rem; border-radius: .4rem; font-size: .8rem; }
-    .ok{ background:#0ea; color:#012; }
-    .warn{ background:#ffc107; color:#222; }
-    .err{ background:#f66; color:#fff; }
-    .grid{ display:grid; gap:1rem; }
-    .grid-2{ grid-template-columns: 1fr 1fr; }
-    .grid-3{ grid-template-columns: repeat(3,1fr); }
-    .table-wrap{ overflow:auto; }
-    .lock { opacity:.5; pointer-events:none; filter:grayscale(1); }
-    input[type=file]{ padding:.4rem; }
-    .small { font-size:.85rem }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-  </style>
+-- 1) Garanta que a tabela services tem as colunas esperadas
+alter table public.services add column if not exists company_id uuid;
+alter table public.services add column if not exists type_id    int8;
+alter table public.services add column if not exists owner_name text;
+alter table public.services add column if not exists owner_cpf  text;
+alter table public.services add column if not exists owner_address text;
+alter table public.services add column if not exists site_address  text;
+alter table public.services add column if not exists area_m2 numeric default 0;
+alter table public.services add column if not exists protocol text;
+alter table public.services add column if not exists status text default 'draft';
+alter table public.services add column if not exists created_at timestamptz default now();
+alter table public.services add column if not exists updated_at timestamptz default now();
 
-<script>
-  /*********************************
-   * SUPABASE — bootstrap do cliente
-   *********************************/
-  const SB_URL = localStorage.getItem('SUPABASE_URL') || sessionStorage.getItem('SUPABASE_URL');
-  const SB_KEY = localStorage.getItem('SUPABASE_ANON_KEY') || sessionStorage.getItem('SUPABASE_ANON_KEY');
+-- 1.1) Constraint de status (se não existir)
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'services_status_check'
+  ) then
+    alter table public.services
+      add constraint services_status_check
+      check (status in ('draft','under_review','corrections_requested','concluded'));
+  end if;
+end$$;
 
-  if (!SB_URL || !SB_KEY) {
-    document.getElementById('alertConn').style.display = 'block';
-  }
+-- 1.2) Chave primária se por acaso não existir (ajuste se já tiver PK)
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.services'::regclass
+       and contype = 'p'
+  ) then
+    alter table public.services
+      add column if not exists id uuid default gen_random_uuid(),
+      add primary key (id);
+  end if;
+end$$;
 
-  const sb = (SB_URL && SB_KEY) ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+-- 1.3) FKs (só adiciona se não existirem)
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'services_company_id_fkey'
+  ) then
+    alter table public.services
+      add constraint services_company_id_fkey
+      foreign key (company_id) references public.companies(id) on delete cascade;
+  end if;
 
-  // Empresa atual gravada na index
-  const COMPANY_ID =
-    localStorage.getItem('COMPANY_ID') ||
-    sessionStorage.getItem('COMPANY_ID') ||
-    new URLSearchParams(location.search).get('company_id'); // fallback opcional
+  if not exists (
+    select 1 from pg_constraint where conname = 'services_type_id_fkey'
+  ) then
+    alter table public.services
+      add constraint services_type_id_fkey
+      foreign key (type_id) references public.service_types(id);
+  end if;
+end$$;
 
-  /*********************************
-   * Helpers
-   *********************************/
-  const $ = sel => document.querySelector(sel);
-  const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+-- 2) Trigger para atualizar updated_at
+create or replace function public.fn_touch_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end$$;
 
-  const statusLabel = (s) => {
-    const map = {
-      draft: ['Rascunho', 'warn'],
-      under_review: ['Em análise', 'warn'],
-      corrections_requested: ['Correções solicitadas', 'warn'],
-      concluded: ['Concluído', 'ok']
-    };
-    const [txt, cls] = map[s] || [s, 'muted'];
-    return `<span class="badge ${cls}">${txt}</span>`;
-  };
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger where tgname = 'trg_services_touch_updated_at'
+  ) then
+    create trigger trg_services_touch_updated_at
+      before update on public.services
+      for each row execute function public.fn_touch_updated_at();
+  end if;
+end$$;
 
-  function toast(msg, type='info'){
-    const c = document.createElement('div');
-    c.textContent = msg;
-    c.style.cssText = `position:fixed; right:1rem; bottom:1rem; padding:.6rem .8rem; border-radius:.5rem; color:#fff; z-index:9999;`;
-    c.style.background = type==='err' ? '#d33' : (type==='ok' ? '#0a7' : '#333');
-    document.body.appendChild(c);
-    setTimeout(()=>c.remove(), 3600);
-  }
+-- 3) Ativa RLS
+alter table public.services enable row level security;
 
-  /*********************************
-   * Estado da tela
-   *********************************/
-  let currentService = null;   // objeto completo do serviço carregado
-  let requiredDocs = [];       // docs obrigatórios do tipo
+-- 4) (Re)cria políticas de forma idempotente
+-- Remova políticas antigas com nomes diferentes, se necessário
+-- (seguro: só remove se existirem com esses nomes)
+do $$
+begin
+  if exists (select 1 from pg_policies where schemaname='public' and tablename='services' and policyname='services_select') then
+    drop policy services_select on public.services;
+  end if;
+  if exists (select 1 from pg_policies where schemaname='public' and tablename='services' and policyname='services_insert') then
+    drop policy services_insert on public.services;
+  end if;
+  if exists (select 1 from pg_policies where schemaname='public' and tablename='services' and policyname='services_update') then
+    drop policy services_update on public.services;
+  end if;
+  if exists (select 1 from pg_policies where schemaname='public' and tablename='services' and policyname='services_delete') then
+    drop policy services_delete on public.services;
+  end if;
 
-  // Campos
-  const selType   = $('#selType');
-  const ownerName = $('#ownerName');
-  const ownerCpf  = $('#ownerCpf');
-  const ownerAddr = $('#ownerAddr');
-  const siteAddr  = $('#siteAddr');
-  const areaM2    = $('#areaM2');
-  const proto     = $('#proto');
-  const statusTxt = $('#statusTxt');
+  create policy services_select on public.services
+    for select to authenticated
+    using (
+      exists (
+        select 1 from public.company_members m
+        where m.company_id = services.company_id
+          and m.user_id = auth.uid()
+      )
+    );
 
-  const btnDraft  = $('#btnDraft');
-  const btnSave   = $('#btnSave');
-  const btnSendDocs = $('#btnSendDocs');
-  const btnSubmit = $('#btnSubmit');
-  const docsList  = $('#docsList');
-  const cardDocs  = $('#cardDocs');
-  const cardForm  = $('#cardForm');
-  const tbody     = $('#tblServices tbody');
+  create policy services_insert on public.services
+    for insert to authenticated
+    with check (
+      exists (
+        select 1 from public.company_members m
+        where m.company_id = services.company_id
+          and m.user_id = auth.uid()
+      )
+    );
 
-  /*********************************
-   * Carregamentos iniciais
-   *********************************/
-  (async function init(){
-    if (!sb) return;
+  create policy services_update on public.services
+    for update to authenticated
+    using (
+      exists (
+        select 1 from public.company_members m
+        where m.company_id = services.company_id
+          and m.user_id = auth.uid()
+      )
+    );
 
-    // Verifica empresa
-    if (!COMPANY_ID) {
-      toast('Empresa não definida. Selecione na tela inicial.', 'err');
-    }
+  create policy services_delete on public.services
+    for delete to authenticated
+    using (
+      exists (
+        select 1 from public.company_members m
+        where m.company_id = services.company_id
+          and m.user_id = auth.uid()
+      )
+    );
+end$$;
 
-    // Carrega tipos de serviço
-    const { data: types, error: e1 } = await sb
-      .from('service_types')
-      .select('id, name')
-      .order('name');
-    if (e1) {
-      console.error(e1);
-      toast('Erro ao carregar tipos de serviço', 'err');
-    } else {
-      selType.innerHTML = '<option value="">Selecione...</option>' +
-        (types || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-    }
+-- 5) (Opcional) service_documents (se ainda não existir) + RLS
+create table if not exists public.service_documents (
+  service_id uuid not null references public.services(id) on delete cascade,
+  document_type_id int8 not null references public.document_types(id),
+  file_path text not null,
+  uploaded_at timestamptz not null default now(),
+  primary key (service_id, document_type_id)
+);
 
-    // Lista serviços do usuário/empresa
-    await loadMyServices();
-  })();
+alter table public.service_documents enable row level security;
 
-  /*********************************
-   * Ações da UI
-   *********************************/
-  btnDraft.addEventListener('click', async () => {
-    if (!sb) return;
-    if (!COMPANY_ID) {
-      toast('Defina a empresa na tela inicial.', 'err');
-      return;
-    }
-    const typeId = selType.value;
-    if (!typeId) {
-      toast('Escolha o tipo de serviço.', 'err');
-      return;
-    }
-
-    const payload = {
-      company_id: COMPANY_ID,
-      type_id: typeId,
-      owner_name: ownerName.value?.trim() || null,
-      owner_cpf: ownerCpf.value?.trim() || null,
-      owner_address: ownerAddr.value?.trim() || null,
-      site_address: siteAddr.value?.trim() || null,
-      area_m2: areaM2.value ? Number(areaM2.value) : 0,
-      status: 'draft'
-    };
-    console.log('[Criar/Salvar] payload:', payload);
-
-    // Se já existir um serviço carregado, vira “Salvar alterações”
-    if (currentService?.id) {
-      const { data, error } = await sb.from('services')
-        .update(payload).eq('id', currentService.id).select().single();
-      if (error) { console.error(error); return toast('Erro ao salvar rascunho: ' + (error.message||''), 'err'); }
-      currentService = data;
-      toast('Rascunho salvo', 'ok');
-      refreshForm();
-      await loadRequiredDocs();
-      return;
-    }
-
-    // Cria rascunho novo
-    const { data, error } = await sb.from('services').insert(payload).select().single();
-    if (error) {
-      console.error('[INSERT services] error:', error);
-      return toast('Erro ao criar rascunho: ' + (error.message || 'ver console'), 'err');
-    }
-    currentService = data;
-    toast('Rascunho criado', 'ok');
-    refreshForm();
-    await loadRequiredDocs();
-    await loadMyServices();
-  });
-
-  btnSave.addEventListener('click', async () => {
-    if (!sb || !currentService?.id) return;
-    const payload = {
-      type_id: selType.value || null,
-      owner_name: ownerName.value?.trim() || null,
-      owner_cpf: ownerCpf.value?.trim() || null,
-      owner_address: ownerAddr.value?.trim() || null,
-      site_address: siteAddr.value?.trim() || null,
-      area_m2: areaM2.value ? Number(areaM2.value) : 0,
-    };
-    const { data, error } = await sb.from('services')
-      .update(payload).eq('id', currentService.id).select().single();
-    if (error) { console.error(error); return toast('Erro ao salvar: ' + (error.message||''), 'err'); }
-    currentService = data;
-    toast('Alterações salvas', 'ok');
-    refreshForm();
-    await loadRequiredDocs();
-    await loadMyServices();
-  });
-
-  btnSendDocs.addEventListener('click', async () => {
-    if (!sb || !currentService?.id) return;
-
-    const inputs = docsList.querySelectorAll('input[type=file]');
-    if (!inputs.length) return toast('Nenhum campo de upload disponível.', 'err');
-
-    const bucket = sb.storage.from('pdfs');
-    const uploads = [];
-
-    inputs.forEach(inp => {
-      const file = inp.files?.[0];
-      if (!file) return;
-      if (file.type !== 'application/pdf') {
-        return toast(`O arquivo "${file.name}" precisa ser PDF.`, 'err');
-      }
-      const docCode = inp.dataset.code; // veio do render
-      const docId   = inp.dataset.docid;
-      const path = `${COMPANY_ID}/${currentService.id}/${docCode}.pdf`;
-
-      uploads.push(
-        (async () => {
-          const { error: upErr } = await bucket.upload(path, file, { upsert: true, contentType: 'application/pdf' });
-          if (upErr) { console.error(upErr); throw upErr; }
-
-          const { error: dbErr } = await sb.from('service_documents')
-            .upsert({
-              service_id: currentService.id,
-              document_type_id: docId,
-              file_path: path,
-              uploaded_at: new Date().toISOString()
-            }, { onConflict: 'service_id,document_type_id' });
-          if (dbErr) { console.error(dbErr); throw dbErr; }
-        })()
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='service_documents' and policyname='sd_select'
+  ) then
+    create policy sd_select on public.service_documents
+      for select to authenticated
+      using (
+        exists (
+          select 1 from public.services s
+           join public.company_members m on m.company_id = s.company_id
+          where s.id = service_documents.service_id
+            and m.user_id = auth.uid()
+        )
       );
-    });
+  end if;
 
-    try {
-      await Promise.all(uploads);
-      toast('Uploads salvos', 'ok');
-      await loadRequiredDocs();
-    } catch (e) {
-      toast('Falha ao enviar algum documento', 'err');
-    }
-  });
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='service_documents' and policyname='sd_upsert'
+  ) then
+    create policy sd_upsert on public.service_documents
+      for insert to authenticated
+      with check (
+        exists (
+          select 1 from public.services s
+           join public.company_members m on m.company_id = s.company_id
+          where s.id = service_documents.service_id
+            and m.user_id = auth.uid()
+        )
+      );
+  end if;
 
-  btnSubmit.addEventListener('click', async () => {
-    if (!sb || !currentService?.id) return;
-
-    const { data, error } = await sb.from('services')
-      .update({ status: 'under_review', updated_at: new Date().toISOString() })
-      .eq('id', currentService.id).select().single();
-    if (error) { console.error(error); return toast('Erro ao enviar para análise: ' + (error.message||''), 'err'); }
-    currentService = data;
-    toast('Enviado para análise', 'ok');
-    refreshForm();
-    await loadMyServices();
-  });
-
-  /*********************************
-   * Funções de tela/dados
-   *********************************/
-  async function loadMyServices() {
-    if (!sb) return;
-    const { data, error } = await sb
-      .from('services')
-      .select('id, status, protocol, created_at, service_types(name)')
-      .eq('company_id', COMPANY_ID)     // <<< filtra pela empresa
-      .order('created_at', { ascending: false });
-    if (error) { console.error(error); return; }
-
-    tbody.innerHTML = (data || []).map(s => `
-      <tr>
-        <td class="mono">${s.id}</td>
-        <td>${s.service_types?.name || '-'}</td>
-        <td>${statusLabel(s.status)}</td>
-        <td class="mono">${s.protocol || '-'}</td>
-        <td>${fmt.format(new Date(s.created_at))}</td>
-        <td>
-          <button class="secondary small" data-edit="${s.id}" ${!canEdit(s.status) ? 'disabled' : ''}>Editar</button>
-        </td>
-      </tr>
-    `).join('');
-
-    tbody.querySelectorAll('button[data-edit]').forEach(btn => {
-      btn.addEventListener('click', () => loadServiceById(btn.dataset.edit));
-    });
-  }
-
-  function canEdit(status){
-    return ['draft','corrections_requested'].includes(status);
-  }
-
-  async function loadServiceById(id){
-    if (!sb) return;
-    const { data, error } = await sb.from('services').select('*').eq('id', id).single();
-    if (error) { console.error(error); return toast('Erro ao carregar serviço', 'err'); }
-    currentService = data;
-    refreshForm();
-    await loadRequiredDocs();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function refreshForm(){
-    if (!currentService) {
-      btnSave.disabled = true;
-      proto.value = ''; statusTxt.value = '';
-      docsList.innerHTML = ''; cardDocs.style.display = 'none';
-      cardForm.classList.remove('lock');
-      return;
-    }
-    selType.value   = currentService.type_id ?? '';
-    ownerName.value = currentService.owner_name ?? '';
-    ownerCpf.value  = currentService.owner_cpf ?? '';
-    ownerAddr.value = currentService.owner_address ?? '';
-    siteAddr.value  = currentService.site_address ?? '';
-    areaM2.value    = Number(currentService.area_m2 ?? 0);
-    proto.value     = currentService.protocol || '';
-    statusTxt.value = currentService.status || '';
-
-    const editable = canEdit(currentService.status);
-    btnSave.disabled = !editable;
-    btnSendDocs.disabled = !editable;
-    btnSubmit.disabled = !editable;
-    cardForm.classList.toggle('lock', !editable);
-
-    cardDocs.style.display = 'block';
-  }
-
-  async function loadRequiredDocs(){
-    if (!sb || !currentService?.type_id) return;
-
-    let sel = 'document_type_id, document_types:document_type_id ( id, name, code )';
-    const { data, error } = await sb
-      .from('service_type_requirements')
-      .select(sel)
-      .eq('service_type_id', currentService.type_id);
-    if (error) { console.error(error); return; }
-
-    const { data: sent } = await sb
-      .from('service_documents')
-      .select('document_type_id, file_path, uploaded_at')
-      .eq('service_id', currentService.id);
-
-    requiredDocs = (data || []).map(r => ({
-      id: r.document_types?.id || r.document_type_id,
-      name: r.document_types?.name || '(sem nome)',
-      code: r.document_types?.code || 'doc',
-      sent: sent?.find(s => s.document_type_id === (r.document_types?.id || r.document_type_id)) || null
-    }));
-
-    docsList.innerHTML = requiredDocs.map(d => `
-      <article>
-        <header class="grid grid-3" style="align-items:center;">
-          <strong>${d.name}</strong>
-          <span class="mono small muted">código: ${d.code}</span>
-          <span>${d.sent ? '<span class="badge ok">enviado</span>' : '<span class="badge warn">pendente</span>'}</span>
-        </header>
-        <input type="file" accept="application/pdf" data-code="${d.code}" data-docid="${d.id}" ${!canEdit(currentService.status) ? 'disabled' : ''}/>
-        ${d.sent ? `<small class="muted">Último envio: ${fmt.format(new Date(d.sent.uploaded_at))}</small>` : ''}
-      </article>
-    `).join('');
-  }
-</script>
-    /*********************************
-     * SUPABASE — Inicialização
-     *********************************/
-    const SUPA_URL  = sessionStorage.getItem('SUPA_URL')  || localStorage.getItem('SUPABASE_URL');
-    const SUPA_KEY  = sessionStorage.getItem('SUPA_KEY')  || localStorage.getItem('SUPABASE_ANON_KEY');
-    const CURRENT_COMPANY_ID = sessionStorage.getItem('COMPANY_ID') || localStorage.getItem('COMPANY_ID');
-
-    if (!SUPA_URL || !SUPA_KEY) {
-      document.getElementById('alertConn').style.display = 'block';
-    }
-
-    const sb = (SUPA_URL && SUPA_KEY) ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
-
-    /*********************************
-     * Helpers
-     *********************************/
-    const $ = sel => document.querySelector(sel);
-    const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-
-    const statusLabel = (s) => {
-      const map = {
-        draft: ['Rascunho', 'warn'],
-        under_review: ['Em análise', 'warn'],
-        corrections_requested: ['Correções solicitadas', 'warn'],
-        concluded: ['Concluído', 'ok']
-      };
-      const [txt, cls] = map[s] || [s, 'muted'];
-      return `<span class="badge ${cls}">${txt}</span>`;
-    };
-
-    function toast(msg, type='info'){
-      const c = document.createElement('div');
-      c.textContent = msg;
-      c.style.cssText = `position:fixed; right:1rem; bottom:1rem; padding:.6rem .8rem; border-radius:.5rem; color:#fff; z-index:9999;`;
-      c.style.background = type==='err' ? '#d33' : (type==='ok' ? '#0a7' : '#333');
-      document.body.appendChild(c);
-      setTimeout(()=>c.remove(), 3600);
-    }
-
-    /*********************************
-     * Estado da tela
-     *********************************/
-    let currentService = null;   // serviço carregado (objeto)
-    let requiredDocs = [];       // docs obrigatórios do tipo
-
-    // Campos
-    const selType   = $('#selType');
-    const ownerName = $('#ownerName');
-    const ownerCpf  = $('#ownerCpf');
-    const ownerAddr = $('#ownerAddr');
-    const siteAddr  = $('#siteAddr');
-    const areaM2    = $('#areaM2');
-    const proto     = $('#proto');
-    const statusTxt = $('#statusTxt');
-
-    const btnDraft  = $('#btnDraft');
-    const btnSave   = $('#btnSave');
-    const btnSendDocs = $('#btnSendDocs');
-    const btnSubmit = $('#btnSubmit');
-    const docsList  = $('#docsList');
-    const cardDocs  = $('#cardDocs');
-    const cardForm  = $('#cardForm');
-    const tbody     = $('#tblServices tbody');
-
-    /*********************************
-     * Inicialização
-     *********************************/
-    (async function init(){
-      if (!sb) return;
-
-      if (!CURRENT_COMPANY_ID) {
-        // Sem travar a página — apenas alerta
-        toast('Empresa não definida. Selecione na tela inicial.', 'err');
-      }
-
-      // Carregar tipos de serviço
-      const { data: types, error: e1 } = await sb.from('service_types').select('id, name').order('name');
-      if (e1) {
-        console.error(e1);
-        toast('Erro ao carregar tipos de serviço', 'err');
-      } else {
-        selType.innerHTML = '<option value="">Selecione...</option>' +
-          (types||[]).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-      }
-
-      // Carregar serviços existentes
-      await loadMyServices();
-    })();
-
-    /*********************************
-     * Regras de edição
-     *********************************/
-    function canEdit(status){
-      return ['draft','corrections_requested'].includes(status);
-    }
-
-    function refreshForm(){
-      if (!currentService) {
-        btnSave.disabled = true;
-        btnSendDocs.disabled = true;
-        btnSubmit.disabled = true;
-        proto.value = ''; statusTxt.value = '';
-        docsList.innerHTML = ''; cardDocs.style.display = 'none';
-        cardForm.classList.remove('lock');
-        return;
-      }
-      // Preenche campos
-      selType.value   = currentService.type_id ?? '';
-      ownerName.value = currentService.owner_name ?? '';
-      ownerCpf.value  = currentService.owner_cpf ?? '';
-      ownerAddr.value = currentService.owner_address ?? '';
-      siteAddr.value  = currentService.site_address ?? '';
-      areaM2.value    = Number(currentService.area_m2 ?? 0);
-      proto.value     = currentService.protocol || '';
-      statusTxt.value = currentService.status || '';
-
-      const editable = canEdit(currentService.status);
-      btnSave.disabled = !editable;
-      btnSendDocs.disabled = !editable;
-      btnSubmit.disabled = !editable;
-      cardForm.classList.toggle('lock', !editable);
-
-      cardDocs.style.display = 'block';
-    }
-
-    /*********************************
-     * Ações: Criar rascunho / Salvar
-     *********************************/
-    btnDraft.addEventListener('click', async () => {
-      if (!sb) return;
-      if (!CURRENT_COMPANY_ID) {
-        toast('Defina a empresa na tela inicial.', 'err');
-        return;
-      }
-      const typeId = selType.value;
-      if (!typeId) {
-        toast('Escolha o tipo de serviço.', 'err');
-        return;
-      }
-
-      const payload = {
-        company_id: CURRENT_COMPANY_ID,
-        type_id: typeId,
-        owner_name: (ownerName.value || null),
-        owner_cpf: (ownerCpf.value || null),
-        owner_address: (ownerAddr.value || null),
-        site_address: (siteAddr.value || null),
-        area_m2: areaM2.value ? Number(areaM2.value) : 0,
-        status: 'draft'
-      };
-
-      // Se já existe, vira "salvar"
-      if (currentService?.id) {
-        const { data, error } = await sb.from('services')
-          .update(payload).eq('id', currentService.id).select().single();
-        if (error) { console.error(error); return toast('Erro ao salvar rascunho', 'err'); }
-        currentService = data;
-        toast('Rascunho salvo', 'ok');
-        refreshForm();
-        await loadRequiredDocs();
-        await loadMyServices();
-        return;
-      }
-
-      // Cria rascunho novo
-      const { data, error } = await sb.from('services').insert(payload).select().single();
-      if (error) { console.error(error); return toast('Erro ao criar rascunho', 'err'); }
-      currentService = data;
-      toast('Rascunho criado', 'ok');
-      refreshForm();
-      await loadRequiredDocs();
-      await loadMyServices();
-    });
-
-    btnSave.addEventListener('click', async () => {
-      if (!sb || !currentService?.id) return;
-      const payload = {
-        type_id: selType.value || null,
-        owner_name: (ownerName.value || null),
-        owner_cpf: (ownerCpf.value || null),
-        owner_address: (ownerAddr.value || null),
-        site_address: (siteAddr.value || null),
-        area_m2: areaM2.value ? Number(areaM2.value) : 0,
-      };
-      const { data, error } = await sb.from('services')
-        .update(payload).eq('id', currentService.id).select().single();
-      if (error) { console.error(error); return toast('Erro ao salvar', 'err'); }
-      currentService = data;
-      toast('Alterações salvas', 'ok');
-      refreshForm();
-      await loadRequiredDocs();
-      await loadMyServices();
-    });
-
-    /*********************************
-     * Documentos
-     *********************************/
-    async function loadRequiredDocs(){
-      if (!sb || !currentService?.type_id) return;
-
-      // Relacionamento: service_type_requirements (service_type_id, document_type_id)
-      // document_types (id, name, code)
-      const { data, error } = await sb
-        .from('service_type_requirements')
-        .select('document_type_id, document_types:document_type_id ( id, name, code )')
-        .eq('service_type_id', currentService.type_id);
-      if (error) { console.error(error); return; }
-
-      const { data: sent } = await sb
-        .from('service_documents')
-        .select('document_type_id, file_path, uploaded_at')
-        .eq('service_id', currentService.id);
-
-      requiredDocs = (data || []).map(r => {
-        const id = r.document_types?.id || r.document_type_id;
-        return {
-          id,
-          name: r.document_types?.name || '(sem nome)',
-          code: r.document_types?.code || 'doc',
-          sent: (sent||[]).find(s => s.document_type_id === id) || null
-        }
-      });
-
-      docsList.innerHTML = requiredDocs.map(d => `
-        <article>
-          <header class="grid grid-3" style="align-items:center;">
-            <strong>${d.name}</strong>
-            <span class="mono small muted">código: ${d.code}</span>
-            <span>${d.sent ? '<span class="badge ok">enviado</span>' : '<span class="badge warn">pendente</span>'}</span>
-          </header>
-          <input type="file" accept="application/pdf" data-code="${d.code}" data-docid="${d.id}" ${!canEdit(currentService.status) ? 'disabled' : ''}/>
-          ${d.sent ? `<small class="muted">Último envio: ${fmt.format(new Date(d.sent.uploaded_at))}</small>` : ''}
-        </article>
-      `).join('');
-    }
-
-    btnSendDocs.addEventListener('click', async () => {
-      if (!sb || !currentService?.id) return;
-      const inputs = docsList.querySelectorAll('input[type=file]');
-      if (!inputs.length) return toast('Nenhum campo de upload disponível.', 'err');
-
-      const bucket = sb.storage.from('pdfs');
-      const uploads = [];
-
-      inputs.forEach(inp => {
-        const file = inp.files?.[0];
-        if (!file) return;
-        if (file.type !== 'application/pdf') return toast(`O arquivo "${file.name}" precisa ser PDF.`, 'err');
-        const docCode = inp.dataset.code;
-        const docId   = inp.dataset.docid;
-        const path = `${CURRENT_COMPANY_ID}/${currentService.id}/${docCode}.pdf`;
-
-        uploads.push((async () => {
-          const { error: upErr } = await bucket.upload(path, file, { upsert: true, contentType: 'application/pdf' });
-          if (upErr) { console.error(upErr); throw upErr; }
-
-          const { error: dbErr } = await sb.from('service_documents')
-            .upsert({
-              service_id: currentService.id,
-              document_type_id: docId,
-              file_path: path,
-              uploaded_at: new Date().toISOString()
-            }, { onConflict: 'service_id,document_type_id' });
-          if (dbErr) { console.error(dbErr); throw dbErr; }
-        })());
-      });
-
-      try {
-        await Promise.all(uploads);
-        toast('Uploads salvos', 'ok');
-        await loadRequiredDocs();
-      } catch (e) {
-        toast('Falha ao enviar algum documento', 'err');
-      }
-    });
-
-    btnSubmit.addEventListener('click', async () => {
-      if (!sb || !currentService?.id) return;
-      const { data, error } = await sb.from('services')
-        .update({ status: 'under_review', updated_at: new Date().toISOString() })
-        .eq('id', currentService.id).select().single();
-      if (error) { console.error(error); return toast('Erro ao enviar para análise', 'err'); }
-      currentService = data;
-      toast('Enviado para análise', 'ok');
-      refreshForm();
-      await loadMyServices();
-    });
-
-    /*********************************
-     * Lista e edição de serviços
-     *********************************/
-    async function loadMyServices() {
-      if (!sb) return;
-      const { data, error } = await sb
-        .from('services')
-        .select('id, status, protocol, created_at, service_types(name)')
-        .order('created_at', { ascending: false });
-      if (error) { console.error(error); return; }
-
-      tbody.innerHTML = (data || []).map(s => `
-        <tr>
-          <td class="mono">${s.id}</td>
-          <td>${s.service_types?.name || '-'}</td>
-          <td>${statusLabel(s.status)}</td>
-          <td class="mono">${s.protocol || '-'}</td>
-          <td>${fmt.format(new Date(s.created_at))}</td>
-          <td>
-            <button class="secondary small" data-edit="${s.id}" ${!canEdit(s.status) ? 'disabled' : ''}>Editar</button>
-          </td>
-        </tr>
-      `).join('');
-
-      tbody.querySelectorAll('button[data-edit]').forEach(btn => {
-        btn.addEventListener('click', () => loadServiceById(btn.dataset.edit));
-      });
-    }
-
-    async function loadServiceById(id){
-      if (!sb) return;
-      const { data, error } = await sb.from('services').select('*').eq('id', id).single();
-      if (error) { console.error(error); return toast('Erro ao carregar serviço', 'err'); }
-      currentService = data;
-      refreshForm();
-      await loadRequiredDocs();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  </script>
-</body>
-</html>
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='service_documents' and policyname='sd_delete'
+  ) then
+    create policy sd_delete on public.service_documents
+      for delete to authenticated
+      using (
+        exists (
+          select 1 from public.services s
+           join public.company_members m on m.company_id = s.company_id
+          where s.id = service_documents.service_id
+            and m.user_id = auth.uid()
+        )
+      );
+  end if;
+end$$;
