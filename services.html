@@ -236,6 +236,7 @@
       await loadRequiredDocs();
     }catch(e){
       console.error('create/update draft error:', e);
+      if (e && e.error) console.error('postgrest:', e.error);
       toast('Erro ao criar rascunho','err');
     }
   }
