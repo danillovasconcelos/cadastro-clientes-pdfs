@@ -31,7 +31,7 @@
   <nav>
     <ul><li><a href="./index.html">← Voltar</a></li></ul>
     <ul>
-      <li class="muted small">Se preciso, passe na tela inicial para gravar <code>SUPA_URL</code>/<code>SUPA_KEY</code>.</li>
+      <li class="muted small">Se preciso, passe na tela inicial para gravar <code>SUPABASE_URL</code>/<code>SUPABASE_ANON_KEY</code>.</li>
       <li><a href="./analyst.html">Ir ao Painel do Analista</a></li>
     </ul>
   </nav>
@@ -112,8 +112,10 @@
 <!-- Script ÚNICO com toda a lógica -->
 <script>
   /************ Config / bootstrap ************/
-  const SB_URL = sessionStorage.getItem('SUPA_URL') || localStorage.getItem('SUPA_URL') || '';
-  const SB_KEY = sessionStorage.getItem('SUPA_KEY') || localStorage.getItem('SUPA_KEY') || '';
+  // >>> MESMOS NOMES DO index.html <<<
+  const SB_URL = sessionStorage.getItem('SUPABASE_URL') || localStorage.getItem('SUPABASE_URL') || '';
+  const SB_KEY = sessionStorage.getItem('SUPABASE_ANON_KEY') || localStorage.getItem('SUPABASE_ANON_KEY') || '';
+
   const COMPANY_ID =
     sessionStorage.getItem('COMPANY_ID') ||
     localStorage.getItem('COMPANY_ID') ||
@@ -124,7 +126,7 @@
   let sb = null;
   function ensureSupabase(){
     if (!window.supabase) throw new Error('Supabase JS não carregado.');
-    if (!SB_URL || !SB_KEY) throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador.');
+    if (!SB_URL || !SB_KEY) throw new Error('SUPABASE_URL/SUPABASE_ANON_KEY não encontrados no navegador.');
     if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
     return sb;
   }
@@ -175,11 +177,14 @@
   async function init(){
     try{
       ensureSupabase(); // cria o client
+
       // Carrega tipos de serviço
       const { data: types, error: e1 } = await sb.from('service_types').select('id,name').order('name');
-      if (e1){ console.error(e1); toast('Erro ao carregar tipos de serviço','err'); }
-      else {
-        selType.innerHTML = '<option value="">Selecione...</option>' + (types||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+      if (e1){
+        console.error(e1); toast('Erro ao carregar tipos de serviço','err');
+      } else {
+        selType.innerHTML = '<option value="">Selecione...</option>' +
+          (types||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
       }
 
       if (!COMPANY_ID) toast('Empresa não definida. Selecione na tela inicial.','err');
