@@ -245,7 +245,7 @@
     try{
       ensureSupabase();
       const payload = {
-        type_id: selType.value || null,
+        service_type_id: selType.value || null,
         owner_name: ownerName.value?.trim() || null,
         owner_cpf:  ownerCpf.value?.trim()  || null,
         owner_address: ownerAddr.value?.trim() || null,
@@ -323,7 +323,7 @@
     ensureSupabase();
     const { data, error } = await sb
       .from('services')
-      .select('id,status,protocol,created_at, service_types(name)')
+      .select('id,status,protocol,created_at, service_types:service_type_id(name)')
       .order('created_at',{ascending:false});
     if (error){ console.error(error); return; }
 
@@ -362,7 +362,7 @@
       proto.value=''; statusTxt.value='';
       return;
     }
-    selType.value   = currentService.type_id ?? '';
+    selType.value   = currentService.service_type_id ?? '';
     ownerName.value = currentService.owner_name ?? '';
     ownerCpf.value  = currentService.owner_cpf ?? '';
     ownerAddr.value = currentService.owner_address ?? '';
@@ -386,7 +386,7 @@
     const { data, error } = await sb
       .from('service_type_requirements')
       .select('document_type_id, document_types:document_type_id(id,name,code)')
-      .eq('service_type_id', currentService.type_id);
+      .eq('service_type_id', currentService.service_type_id);
     if (error){ console.error(error); return; }
 
     const { data: sent } = await sb
