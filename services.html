@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Serviços — Usuário</title>
 
+  <!-- Estilos -->
   <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
   <style>
     body { --pico-font-size: 16px; }
@@ -22,84 +23,9 @@
     .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace }
   </style>
 
-<!-- 2) Seu script que usa o Supabase: -->
-<script>
-  /*********************************
-   * SUPABASE — bootstrap do cliente
-   *********************************/
-  // Use os MESMOS nomes usados na index:
-  const SB_URL = sessionStorage.getItem('SUPA_URL') || localStorage.getItem('SUPA_URL') || '';
-  const SB_KEY = sessionStorage.getItem('SUPA_KEY') || localStorage.getItem('SUPA_KEY') || '';
-
-  if (!SB_URL || !SB_KEY) {
-    const a = document.getElementById('alertConn');
-    if (a) a.style.display = 'block';
-  }
-
-  let sb = null;
-  function ensureSupabase(){
-    if (!window.supabase) throw new Error('Supabase JS não carregado.');
-    if (!SB_URL || !SB_KEY) throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador.');
-    if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
-    return sb;
-  }
-
-  // Empresa atual (mesmo nome usado na index)
-  const COMPANY_ID =
-    sessionStorage.getItem('COMPANY_ID') ||
-    localStorage.getItem('COMPANY_ID') ||
-    new URLSearchParams(location.search).get('company_id');
-
-  // Helpers mínimos
-  const $ = (s)=>document.querySelector(s);
-  function toast(msg,type='info'){
-    const c=document.createElement('div');
-    c.textContent=msg;
-    c.style.cssText='position:fixed;right:1rem;bottom:1rem;padding:.6rem .8rem;border-radius:.5rem;color:#fff;z-index:9999;';
-    c.style.background= type==='err' ? '#d33' : (type==='ok' ? '#0a7' : '#333');
-    document.body.appendChild(c); setTimeout(()=>c.remove(),3600);
-  }
-
-  const selType = $('#selType');
-
-  async function init(){
-    try{
-      const client = ensureSupabase();
-
-      // Carrega tipos de serviço
-      const { data: types, error } = await client
-        .from('service_types')
-        .select('id,name')
-        .order('name');
-
-      if (error) {
-        console.error(error);
-        toast('Erro ao carregar tipos de serviço', 'err');
-      } else {
-        selType.innerHTML = '<option value="">Selecione...</option>' +
-          types.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-      }
-
-      // Se quiser, aqui você chama suas funções de listar serviços, etc.
-      // await loadMyServices();
-
-      // Alerta de empresa não definida
-      if (!COMPANY_ID) {
-        toast('Empresa não definida. Selecione na tela inicial.', 'err');
-      }
-    } catch(e){
-      console.error(e);
-      toast(e.message || 'Falha ao iniciar página', 'err');
-    }
-  }
-
-  // Roda quando o DOM estiver pronto
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-</script>
+  <!-- Supabase (UMA única vez) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
 <body>
 <main class="container">
   <nav>
@@ -183,73 +109,36 @@
   </article>
 </main>
 
+<!-- Script ÚNICO com toda a lógica -->
 <script>
-  /*********************************
-   * SUPABASE — bootstrap do cliente
-   *********************************/
-  // 1) Use os MESMOS nomes gravados na index (SUPA_URL / SUPA_KEY)
+  /************ Config / bootstrap ************/
   const SB_URL = sessionStorage.getItem('SUPA_URL') || localStorage.getItem('SUPA_URL') || '';
   const SB_KEY = sessionStorage.getItem('SUPA_KEY') || localStorage.getItem('SUPA_KEY') || '';
-
-  // 2) Mostra alerta se faltarem credenciais
-  if (!SB_URL || !SB_KEY) {
-    const a = document.getElementById('alertConn');
-    if (a) a.style.display = 'block';
-  }
-
-  // 3) Garante que o script do supabase carregou e cria o client
-  let sb = null;
-  function ensureSupabase() {
-    if (!window.supabase) {
-      throw new Error('Biblioteca Supabase não carregada (window.supabase indefinido).');
-    }
-    if (!SB_URL || !SB_KEY) {
-      throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador. Configure na tela inicial.');
-    }
-    if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
-    return sb;
-  }
-
-  // 4) Empresa atual (mesmo nome usado na index)
   const COMPANY_ID =
     sessionStorage.getItem('COMPANY_ID') ||
     localStorage.getItem('COMPANY_ID') ||
     new URLSearchParams(location.search).get('company_id');
 
-  /*********************************
-   * Helpers
-   *********************************/
-  const $ = (sel) => document.querySelector(sel);
-  const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  if (!SB_URL || !SB_KEY) { document.getElementById('alertConn').style.display = 'block'; }
 
-  const statusLabel = (s) => {
-    const map = {
-      draft: ['Rascunho', 'warn'],
-      under_review: ['Em análise', 'warn'],
-      corrections_requested: ['Correções solicitadas', 'warn'],
-      concluded: ['Concluído', 'ok'],
-    };
-    const [txt, cls] = map[s] || [s, 'muted'];
-    return `<span class="badge ${cls}">${txt}</span>`;
-  };
-
-  function toast(msg, type = 'info') {
-    const c = document.createElement('div');
-    c.textContent = msg;
-    c.style.cssText =
-      'position:fixed;right:1rem;bottom:1rem;padding:.6rem .8rem;border-radius:.5rem;color:#fff;z-index:9999;';
-    c.style.background = type === 'err' ? '#d33' : type === 'ok' ? '#0a7' : '#333';
-    document.body.appendChild(c);
-    setTimeout(() => c.remove(), 3600);
+  let sb = null;
+  function ensureSupabase(){
+    if (!window.supabase) throw new Error('Supabase JS não carregado.');
+    if (!SB_URL || !SB_KEY) throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador.');
+    if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
+    return sb;
   }
-</script>
-  /************
-   * Helpers  *
-   ************/
-  const $  = (s)=>document.querySelector(s);
-  const fmt = new Intl.DateTimeFormat('pt-BR',{dateStyle:'short', timeStyle:'short'});
+
+  /************ Helpers ************/
+  const $ = (s)=>document.querySelector(s);
+  const fmt = new Intl.DateTimeFormat('pt-BR',{ dateStyle:'short', timeStyle:'short' });
   const statusLabel = (s)=>{
-    const map = { draft:['Rascunho','warn'], under_review:['Em análise','warn'], corrections_requested:['Correções','warn'], concluded:['Concluído','ok'] };
+    const map = {
+      draft:['Rascunho','warn'],
+      under_review:['Em análise','warn'],
+      corrections_requested:['Correções solicitadas','warn'],
+      concluded:['Concluído','ok']
+    };
     const [t,c] = map[s] || [s,'muted'];
     return `<span class="badge ${c}">${t}</span>`;
   };
@@ -261,9 +150,7 @@
     document.body.appendChild(x); setTimeout(()=>x.remove(),3200);
   }
 
-  /***********************
-   * Elementos da página *
-   ***********************/
+  /************ Elementos ************/
   let currentService=null, requiredDocs=[];
   const selType   = $('#selType');
   const ownerName = $('#ownerName');
@@ -282,79 +169,76 @@
   const cardDocs  = $('#cardDocs');
   const tbody     = $('#tblServices tbody');
 
-  /*****************
-   * Inicialização *
-   *****************/
+  /************ Init ************/
   window.addEventListener('DOMContentLoaded', init);
 
   async function init(){
     try{
-      if (!sb) return; // sem conexão, apenas mostra o alerta
-
-      if (!COMPANY_ID) {
-        toast('Empresa não definida. Selecione na tela inicial.', 'err');
-      }
-
-      // Tipos de serviço
+      ensureSupabase(); // cria o client
+      // Carrega tipos de serviço
       const { data: types, error: e1 } = await sb.from('service_types').select('id,name').order('name');
-      if (e1) { console.error(e1); toast('Erro ao carregar tipos de serviço','err'); }
+      if (e1){ console.error(e1); toast('Erro ao carregar tipos de serviço','err'); }
       else {
         selType.innerHTML = '<option value="">Selecione...</option>' + (types||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
       }
 
+      if (!COMPANY_ID) toast('Empresa não definida. Selecione na tela inicial.','err');
+
       await loadMyServices();
     }catch(err){
       console.error('init error:', err);
-      toast('Erro ao inicializar a tela','err');
+      toast(err.message || 'Erro ao inicializar a tela','err');
     }
   }
 
-  /************
-   * Ações UI *
-   ************/
-  btnDraft.addEventListener('click', async ()=>{
-    if (!sb) return;
-    if (!COMPANY_ID){ toast('Defina a empresa na tela inicial.','err'); return; }
-    const typeId = selType.value;
-    if (!typeId){ toast('Escolha o tipo de serviço.','err'); return; }
+  /************ Ações ************/
+  btnDraft.addEventListener('click', onCreateOrSaveDraft);
+  btnSave.addEventListener('click', onSave);
+  btnSendDocs.addEventListener('click', onSendDocs);
+  btnSubmit.addEventListener('click', onSubmitForReview);
 
-    const payload = {
-      company_id: COMPANY_ID,
-      type_id: typeId,
-      owner_name: ownerName.value?.trim() || null,
-      owner_cpf:  ownerCpf.value?.trim()  || null,
-      owner_address: ownerAddr.value?.trim() || null,
-      site_address:  siteAddr.value?.trim()  || null,
-      area_m2: Number(areaM2.value||0),
-      status: 'draft'
-    };
-
+  async function onCreateOrSaveDraft(){
     try{
+      ensureSupabase();
+      if (!COMPANY_ID){ toast('Defina a empresa na tela inicial.','err'); return; }
+      const typeId = selType.value;
+      if (!typeId){ toast('Escolha o tipo de serviço.','err'); return; }
+
+      const payload = {
+        company_id: COMPANY_ID,
+        type_id: typeId,
+        owner_name: ownerName.value?.trim() || null,
+        owner_cpf:  ownerCpf.value?.trim()  || null,
+        owner_address: ownerAddr.value?.trim() || null,
+        site_address:  siteAddr.value?.trim()  || null,
+        area_m2: Number(areaM2.value||0),
+        status: 'draft'
+      };
+
       if (currentService?.id){
         const { data, error } = await sb.from('services').update(payload).eq('id', currentService.id).select().single();
         if (error) throw error;
         currentService = data;
         toast('Rascunho salvo','ok');
-        refreshForm();
-        await loadRequiredDocs();
       } else {
         const { data, error } = await sb.from('services').insert(payload).select().single();
         if (error) throw error;
         currentService = data;
         toast('Rascunho criado','ok');
-        refreshForm();
-        await loadRequiredDocs();
         await loadMyServices();
       }
+      refreshForm();
+      await loadRequiredDocs();
     }catch(e){
       console.error('create/update draft error:', e);
       toast('Erro ao criar rascunho','err');
     }
-  });
+  }
 
-  btnSave.addEventListener('click', async ()=>{
-    if (!sb || !currentService?.id) return;
+  async function onSave(){
+    if (!currentService?.id) return;
     try{
+      ensureSupabase();
       const payload = {
         type_id: selType.value || null,
         owner_name: ownerName.value?.trim() || null,
@@ -374,10 +258,11 @@
       console.error('save error:', e);
       toast('Erro ao salvar','err');
     }
-  });
+  }
 
-  btnSendDocs.addEventListener('click', async ()=>{
-    if (!sb || !currentService?.id) return;
+  async function onSendDocs(){
+    if (!currentService?.id) return;
+    ensureSupabase();
     const inputs = docsList.querySelectorAll('input[type=file]');
     if (!inputs.length) return toast('Nenhum campo de upload disponível.','err');
 
@@ -408,11 +293,12 @@
       console.error('upload error:', e);
       toast('Falha ao enviar algum documento','err');
     }
-  });
+  }
 
-  btnSubmit.addEventListener('click', async ()=>{
-    if (!sb || !currentService?.id) return;
+  async function onSubmitForReview(){
+    if (!currentService?.id) return;
     try{
+      ensureSupabase();
       const { data, error } = await sb.from('services')
         .update({ status:'under_review', updated_at: new Date().toISOString() })
         .eq('id', currentService.id).select().single();
@@ -425,13 +311,11 @@
       console.error('submit error:', e);
       toast('Erro ao enviar para análise','err');
     }
-  });
+  }
 
-  /**********************
-   * Funções auxiliares *
-   **********************/
+  /************ Lista / carregar ************/
   async function loadMyServices(){
-    if (!sb) return;
+    ensureSupabase();
     const { data, error } = await sb
       .from('services')
       .select('id,status,protocol,created_at, service_types(name)')
@@ -455,6 +339,7 @@
   }
 
   async function loadServiceById(id){
+    ensureSupabase();
     const { data, error } = await sb.from('services').select('*').eq('id', id).single();
     if (error){ console.error(error); toast('Erro ao carregar serviço','err'); return; }
     currentService = data;
@@ -466,8 +351,8 @@
   function refreshForm(){
     if (!currentService){
       btnSave.disabled = true;
-      $('#docsList').innerHTML = '';
-      $('#cardDocs').style.display = 'none';
+      docsList.innerHTML = '';
+      cardDocs.style.display = 'none';
       $('#cardForm').classList.remove('lock');
       proto.value=''; statusTxt.value='';
       return;
@@ -486,11 +371,12 @@
     btnSendDocs.disabled = !editable;
     btnSubmit.disabled = !editable;
     $('#cardForm').classList.toggle('lock', !editable);
-    $('#cardDocs').style.display = 'block';
+    cardDocs.style.display = 'block';
   }
 
   async function loadRequiredDocs(){
-    if (!sb || !currentService?.type_id) return;
+    if (!currentService?.type_id) return;
+    ensureSupabase();
 
     const { data, error } = await sb
       .from('service_type_requirements')
