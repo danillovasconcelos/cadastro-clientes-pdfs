@@ -25,6 +25,87 @@
   <!-- Supabase JS v2 (UM ÚNICO import) -->
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 </head>
+<!-- 1) Biblioteca Supabase (apenas uma) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- 2) Seu script que usa o Supabase: -->
+<script>
+  /*********************************
+   * SUPABASE — bootstrap do cliente
+   *********************************/
+  // Use os MESMOS nomes usados na index:
+  const SB_URL = sessionStorage.getItem('SUPA_URL') || localStorage.getItem('SUPA_URL') || '';
+  const SB_KEY = sessionStorage.getItem('SUPA_KEY') || localStorage.getItem('SUPA_KEY') || '';
+
+  if (!SB_URL || !SB_KEY) {
+    const a = document.getElementById('alertConn');
+    if (a) a.style.display = 'block';
+  }
+
+  let sb = null;
+  function ensureSupabase(){
+    if (!window.supabase) throw new Error('Supabase JS não carregado.');
+    if (!SB_URL || !SB_KEY) throw new Error('SUPA_URL/SUPA_KEY não encontrados no navegador.');
+    if (!sb) sb = window.supabase.createClient(SB_URL, SB_KEY);
+    return sb;
+  }
+
+  // Empresa atual (mesmo nome usado na index)
+  const COMPANY_ID =
+    sessionStorage.getItem('COMPANY_ID') ||
+    localStorage.getItem('COMPANY_ID') ||
+    new URLSearchParams(location.search).get('company_id');
+
+  // Helpers mínimos
+  const $ = (s)=>document.querySelector(s);
+  function toast(msg,type='info'){
+    const c=document.createElement('div');
+    c.textContent=msg;
+    c.style.cssText='position:fixed;right:1rem;bottom:1rem;padding:.6rem .8rem;border-radius:.5rem;color:#fff;z-index:9999;';
+    c.style.background= type==='err' ? '#d33' : (type==='ok' ? '#0a7' : '#333');
+    document.body.appendChild(c); setTimeout(()=>c.remove(),3600);
+  }
+
+  const selType = $('#selType');
+
+  async function init(){
+    try{
+      const client = ensureSupabase();
+
+      // Carrega tipos de serviço
+      const { data: types, error } = await client
+        .from('service_types')
+        .select('id,name')
+        .order('name');
+
+      if (error) {
+        console.error(error);
+        toast('Erro ao carregar tipos de serviço', 'err');
+      } else {
+        selType.innerHTML = '<option value="">Selecione...</option>' +
+          types.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+      }
+
+      // Se quiser, aqui você chama suas funções de listar serviços, etc.
+      // await loadMyServices();
+
+      // Alerta de empresa não definida
+      if (!COMPANY_ID) {
+        toast('Empresa não definida. Selecione na tela inicial.', 'err');
+      }
+    } catch(e){
+      console.error(e);
+      toast(e.message || 'Falha ao iniciar página', 'err');
+    }
+  }
+
+  // Roda quando o DOM estiver pronto
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+</script>
 <body>
 <main class="container">
   <nav>
